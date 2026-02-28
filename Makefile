@@ -6,6 +6,7 @@ export HOST_WORKSPACE
 COMPOSE := sudo --preserve-env=HOST_WORKSPACE docker compose --env-file $(ENV_FILE)
 PROFILES_SUPERSET := --profile superset
 PROFILES_AIRFLOW := --profile airflow
+ETL_VERBOSE_FLAG := $(if $(filter 1 true yes,$(VERBOSE)),--verbose,)
 
 .PHONY: help init check-host-workspace up-superset up-airflow up-all down logs ps reset-volumes reset-all \
 	etl-bootstrap etl-dry-run etl-backfill-2020-2025 etl-backfill-2020-today \
@@ -26,6 +27,7 @@ help:
 	@echo "  make etl-dry-run    Run ETL extraction + validation without database writes"
 	@echo "  make etl-backfill-2020-2025  Load Airviro data for 2020-2025"
 	@echo "  make etl-backfill-2020-today Load Airviro data from 2020-01-01 to today"
+	@echo "    Optional: add VERBOSE=1 to ETL targets for progress logs"
 	@echo "  make devcontainer-join-course-network  Attach devcontainer to compose network"
 
 init:
@@ -75,13 +77,13 @@ etl-bootstrap: init
 	@.venv/bin/python -m etl.airviro.cli bootstrap-db
 
 etl-dry-run: init
-	@.venv/bin/python -m etl.airviro.cli run --from 2025-01-01 --to 2025-01-31 --dry-run
+	@.venv/bin/python -m etl.airviro.cli run --from 2025-01-01 --to 2025-01-31 --dry-run $(ETL_VERBOSE_FLAG)
 
 etl-backfill-2020-2025: init
-	@.venv/bin/python -m etl.airviro.cli run --from 2020-01-01 --to 2025-12-31
+	@.venv/bin/python -m etl.airviro.cli run --from 2020-01-01 --to 2025-12-31 $(ETL_VERBOSE_FLAG)
 
 etl-backfill-2020-today: init
-	@.venv/bin/python -m etl.airviro.cli backfill --from 2020-01-01
+	@.venv/bin/python -m etl.airviro.cli backfill --from 2020-01-01 $(ETL_VERBOSE_FLAG)
 
 devcontainer-join-course-network: init
 	@project_name="$$(grep -E '^COMPOSE_PROJECT_NAME=' "$(ENV_FILE)" | cut -d '=' -f2-)"; \

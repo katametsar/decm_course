@@ -33,6 +33,14 @@ Run from repo root:
 .venv/bin/python -m etl.airviro.cli backfill --from 2020-01-01
 ```
 
+Verbose progress (recommended while teaching/debugging):
+
+```bash
+.venv/bin/python -m etl.airviro.cli run --from 2020-01-01 --to 2025-12-31 --verbose
+```
+
+`--verbose` prints source/window progress, retries, split events, and cumulative counts to stderr while keeping the final JSON summary on stdout.
+
 Dry-run validation without DB writes:
 
 ```bash
@@ -86,4 +94,3 @@ Tradeoff:
   - Publication URL: <https://aws.plainenglish.io/data-engineering-design-patterns-you-must-learn-in-2026-c25b7bd0b9a7>
   - Friend-link variant used for full text review:
     <https://medium.com/@khushbu.shah_661/data-engineering-design-patterns-you-must-learn-in-2026-c25b7bd0b9a7?sk=6e987862791060915725ed9618652cfd>
-

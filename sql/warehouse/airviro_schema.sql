@@ -68,27 +68,20 @@ CREATE TABLE IF NOT EXISTS mart.dim_wind_direction (
   wraps_around boolean NOT NULL
 );
 
+DELETE FROM mart.dim_wind_direction;
+
 INSERT INTO mart.dim_wind_direction (
   sector_id, sector_code, sector_name, min_degree, max_degree, wraps_around
 )
 VALUES
-  (1,  'N',   'North',             348.75, 11.25,  true),
-  (2,  'NNE', 'North-Northeast',    11.25, 33.75,  false),
-  (3,  'NE',  'Northeast',          33.75, 56.25,  false),
-  (4,  'ENE', 'East-Northeast',     56.25, 78.75,  false),
-  (5,  'E',   'East',               78.75, 101.25, false),
-  (6,  'ESE', 'East-Southeast',    101.25, 123.75, false),
-  (7,  'SE',  'Southeast',         123.75, 146.25, false),
-  (8,  'SSE', 'South-Southeast',   146.25, 168.75, false),
-  (9,  'S',   'South',             168.75, 191.25, false),
-  (10, 'SSW', 'South-Southwest',   191.25, 213.75, false),
-  (11, 'SW',  'Southwest',         213.75, 236.25, false),
-  (12, 'WSW', 'West-Southwest',    236.25, 258.75, false),
-  (13, 'W',   'West',              258.75, 281.25, false),
-  (14, 'WNW', 'West-Northwest',    281.25, 303.75, false),
-  (15, 'NW',  'Northwest',         303.75, 326.25, false),
-  (16, 'NNW', 'North-Northwest',   326.25, 348.75, false)
-ON CONFLICT (sector_id) DO NOTHING;
+  (1, 'N',  'North',      337.50, 22.50,  true),
+  (2, 'NE', 'Northeast',   22.50, 67.50,  false),
+  (3, 'E',  'East',        67.50, 112.50, false),
+  (4, 'SE', 'Southeast',  112.50, 157.50, false),
+  (5, 'S',  'South',      157.50, 202.50, false),
+  (6, 'SW', 'Southwest',  202.50, 247.50, false),
+  (7, 'W',  'West',       247.50, 292.50, false),
+  (8, 'NW', 'Northwest',  292.50, 337.50, false);
 
 CREATE OR REPLACE VIEW mart.v_airviro_measurements_long AS
 SELECT
@@ -125,7 +118,10 @@ SELECT
   dt.date_value,
   dt.year_number,
   dt.month_number,
+  TRIM(dt.month_name) AS month_name,
   dt.day_number,
+  dt.day_name,
+  dt.day_of_week_number,
   dt.hour_number,
   aq.so2,
   aq.no2,
@@ -158,4 +154,3 @@ SELECT
   m.value_numeric
 FROM raw.airviro_measurement AS m
 WHERE m.source_type = 'pollen';
-

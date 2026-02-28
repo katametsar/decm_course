@@ -112,6 +112,12 @@ make etl-dry-run
 make etl-backfill-2020-2025
 ```
 
+For detailed progress logs (source/window/retry/split + cumulative counters):
+
+```bash
+make etl-backfill-2020-2025 VERBOSE=1
+```
+
 Backfill to current date (useful later with Airflow orchestration):
 
 ```bash

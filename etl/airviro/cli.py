@@ -21,6 +21,7 @@ from .db import (
 from .pipeline import (
     DataQualityError,
     PipelineError,
+    ProgressCallback,
     SourceRunSummary,
     build_source_records,
     get_source_configs,
@@ -30,6 +31,116 @@ from .pipeline import (
 
 
 SCHEMA_SQL_PATH = Path("sql/warehouse/airviro_schema.sql")
+
+
+def log_verbose(enabled: bool, message: str) -> None:
+    """Print progress lines only when verbose mode is enabled."""
+
+    if enabled:
+        print(message, file=sys.stderr, flush=True)
+
+
+def build_progress_logger(verbose: bool) -> ProgressCallback | None:
+    """Build a window-level progress logger for extraction."""
+
+    if not verbose:
+        return None
+
+    def _log(event: dict[str, object]) -> None:
+        event_name = str(event.get("event", "unknown"))
+        source_type = str(event.get("source_type", "unknown"))
+
+        if event_name == "source_start":
+            print(
+                (
+                    f"[{source_type}] extracting {event['from_date']}..{event['to_date']} "
+                    f"(station={event['source_station_id']}, "
+                    f"max_window_days={event['max_window_days']}, "
+                    f"top_level_windows={event['top_level_window_count']})"
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        if event_name == "top_level_window_start":
+            print(
+                (
+                    f"[{source_type}] window {event['window_index']}/{event['window_count']} "
+                    f"{event['window_start']}..{event['window_end']}"
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        if event_name == "top_level_window_complete":
+            print(
+                (
+                    f"[{source_type}] window {event['window_index']}/{event['window_count']} done: "
+                    f"rows={event['rows_read_window']} records={event['records_normalized_window']} "
+                    f"duplicates={event['duplicates_window']} "
+                    f"(totals rows={event['rows_read_total']} records={event['records_normalized_total']} "
+                    f"windows_requested={event['windows_requested_total']} splits={event['split_events_total']})"
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        if event_name == "window_split":
+            print(
+                (
+                    f"[{source_type}] split {event['window_start']}..{event['window_end']} -> "
+                    f"{event['left_window_start']}..{event['left_window_end']} + "
+                    f"{event['right_window_start']}..{event['right_window_end']} "
+                    f"(split_events_total={event['split_events_total']})"
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        if event_name == "fetch_retry":
+            print(
+                (
+                    f"[{source_type}] retry {event['attempt']}/{event['retry_count']} for "
+                    f"{event['window_start']}..{event['window_end']} "
+                    f"reason={event['reason']} backoff={event['backoff_seconds']}s"
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        if event_name == "fetch_failed":
+            print(
+                (
+                    f"[{source_type}] fetch failed after {event['attempt']}/{event['retry_count']} for "
+                    f"{event['window_start']}..{event['window_end']} "
+                    f"reason={event['reason']} retriable={event['retriable']}"
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        if event_name == "source_complete":
+            print(
+                (
+                    f"[{source_type}] extraction complete: rows={event['rows_read_total']} "
+                    f"records={event['records_normalized_total']} duplicates={event['duplicates_total']} "
+                    f"windows_requested={event['windows_requested_total']} "
+                    f"splits={event['split_events_total']}"
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        print(f"[{source_type}] progress event: {event_name}", file=sys.stderr, flush=True)
+
+    return _log
 
 
 def build_parser() -> ArgumentParser:
@@ -60,6 +171,11 @@ def build_parser() -> ArgumentParser:
         default=str(SCHEMA_SQL_PATH),
         help="Path to schema SQL file",
     )
+    run_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed progress during extraction and loading",
+    )
 
     backfill_parser = subparsers.add_parser(
         "backfill", help="Backfill from a start date to today (or provided end date)"
@@ -80,11 +196,24 @@ def build_parser() -> ArgumentParser:
         default=str(SCHEMA_SQL_PATH),
         help="Path to schema SQL file",
     )
+    backfill_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed progress during extraction and loading",
+    )
 
     return parser
 
 
-def run_pipeline(settings: Settings, start_date: date, end_date: date, *, dry_run: bool, schema_sql: Path) -> dict[str, object]:
+def run_pipeline(
+    settings: Settings,
+    start_date: date,
+    end_date: date,
+    *,
+    dry_run: bool,
+    schema_sql: Path,
+    verbose: bool,
+) -> dict[str, object]:
     if end_date < start_date:
         raise ValueError("--to must be on or after --from")
 
@@ -95,14 +224,32 @@ def run_pipeline(settings: Settings, start_date: date, end_date: date, *, dry_ru
     selected_host = None
     if not dry_run:
         connection, selected_host = connect_warehouse(settings)
+        log_verbose(verbose, f"[db] connected to warehouse host '{selected_host}'")
+        log_verbose(verbose, f"[db] ensuring schema from '{schema_sql}'")
         apply_schema(connection, schema_sql)
+
+    progress_logger = build_progress_logger(verbose)
 
     try:
         for source in get_source_configs(settings):
             summary = SourceRunSummary(source_type=source.source_type)
             summaries.append(summary)
-            records = build_source_records(settings, source, start_date, end_date, summary)
+            records = build_source_records(
+                settings,
+                source,
+                start_date,
+                end_date,
+                summary,
+                progress=progress_logger,
+            )
             summary.measurements_upserted = len(records)
+            log_verbose(
+                verbose,
+                (
+                    f"[{source.source_type}] normalized records={len(records)} "
+                    f"rows_read={summary.rows_read} duplicates={summary.duplicate_measurements}"
+                ),
+            )
 
             if dry_run:
                 indicator_counts = summarize_indicator_counts(records)
@@ -123,8 +270,10 @@ def run_pipeline(settings: Settings, start_date: date, end_date: date, *, dry_ru
                 continue
 
             assert connection is not None
+            log_verbose(verbose, f"[{source.source_type}] upserting {len(records)} records")
             loaded_count = upsert_measurements(connection, records)
             summary.measurements_upserted = loaded_count
+            log_verbose(verbose, f"[{source.source_type}] upserted {loaded_count} records")
             log_ingestion_audit(
                 connection,
                 batch_id=batch_id,
@@ -141,7 +290,9 @@ def run_pipeline(settings: Settings, start_date: date, end_date: date, *, dry_ru
 
         if not dry_run:
             assert connection is not None
+            log_verbose(verbose, "[db] refreshing mart dimensions")
             refresh_dimensions(connection)
+            log_verbose(verbose, "[db] dimension refresh complete")
 
     except Exception as exc:
         if not dry_run and connection is not None:
@@ -199,6 +350,7 @@ def main(argv: list[str] | None = None) -> int:
                 end_date,
                 dry_run=args.dry_run,
                 schema_sql=Path(args.schema_sql),
+                verbose=args.verbose,
             )
             print(json.dumps(result, indent=2))
             return 0
@@ -211,4 +363,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

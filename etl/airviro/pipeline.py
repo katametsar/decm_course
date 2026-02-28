@@ -10,6 +10,7 @@ import hashlib
 import io
 import re
 import time
+from typing import Callable
 import unicodedata
 from urllib import error, parse, request
 
@@ -17,6 +18,7 @@ from .config import Settings
 
 
 DATE_COLUMN_CANDIDATES = ("Kuupäev", "Kuupaev", "Date")
+ProgressCallback = Callable[[dict[str, object]], None]
 
 
 class PipelineError(RuntimeError):
@@ -124,6 +126,7 @@ def fetch_source_window(
     window_start: date,
     window_end: date,
     retry_count: int,
+    progress: ProgressCallback | None = None,
 ) -> str:
     """Fetch one raw CSV response for a date window."""
 
@@ -144,16 +147,70 @@ def fetch_source_window(
         except error.HTTPError as exc:
             retriable = exc.code >= 500
             if not retriable or attempt == retry_count:
+                if progress is not None:
+                    progress(
+                        {
+                            "event": "fetch_failed",
+                            "source_type": source.source_type,
+                            "window_start": window_start.isoformat(),
+                            "window_end": window_end.isoformat(),
+                            "attempt": attempt,
+                            "retry_count": retry_count,
+                            "retriable": retriable,
+                            "reason": f"http_{exc.code}",
+                        }
+                    )
                 raise SourceFetchError(
                     f"{source.source_type} request failed ({exc.code}) for {window_start}..{window_end}",
                     retriable=retriable,
                 ) from exc
+            if progress is not None:
+                progress(
+                    {
+                        "event": "fetch_retry",
+                        "source_type": source.source_type,
+                        "window_start": window_start.isoformat(),
+                        "window_end": window_end.isoformat(),
+                        "attempt": attempt,
+                        "retry_count": retry_count,
+                        "retriable": retriable,
+                        "reason": f"http_{exc.code}",
+                        "backoff_seconds": 2**attempt,
+                    }
+                )
         except (error.URLError, TimeoutError) as exc:
             if attempt == retry_count:
+                if progress is not None:
+                    progress(
+                        {
+                            "event": "fetch_failed",
+                            "source_type": source.source_type,
+                            "window_start": window_start.isoformat(),
+                            "window_end": window_end.isoformat(),
+                            "attempt": attempt,
+                            "retry_count": retry_count,
+                            "retriable": True,
+                            "reason": type(exc).__name__,
+                        }
+                    )
                 raise SourceFetchError(
                     f"{source.source_type} request timed out for {window_start}..{window_end}",
                     retriable=True,
                 ) from exc
+            if progress is not None:
+                progress(
+                    {
+                        "event": "fetch_retry",
+                        "source_type": source.source_type,
+                        "window_start": window_start.isoformat(),
+                        "window_end": window_end.isoformat(),
+                        "attempt": attempt,
+                        "retry_count": retry_count,
+                        "retriable": True,
+                        "reason": type(exc).__name__,
+                        "backoff_seconds": 2**attempt,
+                    }
+                )
 
         # Basic exponential backoff for transient failures.
         time.sleep(2 ** attempt)
@@ -278,6 +335,7 @@ def extract_window_with_split(
     window_start: date,
     window_end: date,
     summary: SourceRunSummary,
+    progress: ProgressCallback | None = None,
 ) -> list[MeasurementRow]:
     """Extract and parse one window, recursively splitting on retriable failures."""
 
@@ -289,6 +347,7 @@ def extract_window_with_split(
             window_start=window_start,
             window_end=window_end,
             retry_count=settings.request_retries,
+            progress=progress,
         )
     except SourceFetchError as exc:
         span_days = (window_end - window_start).days + 1
@@ -300,8 +359,36 @@ def extract_window_with_split(
         split_size = span_days // 2
         left_end = window_start + timedelta(days=split_size - 1)
         right_start = left_end + timedelta(days=1)
-        left = extract_window_with_split(settings, source, window_start, left_end, summary)
-        right = extract_window_with_split(settings, source, right_start, window_end, summary)
+        if progress is not None:
+            progress(
+                {
+                    "event": "window_split",
+                    "source_type": source.source_type,
+                    "window_start": window_start.isoformat(),
+                    "window_end": window_end.isoformat(),
+                    "left_window_start": window_start.isoformat(),
+                    "left_window_end": left_end.isoformat(),
+                    "right_window_start": right_start.isoformat(),
+                    "right_window_end": window_end.isoformat(),
+                    "split_events_total": summary.split_events,
+                }
+            )
+        left = extract_window_with_split(
+            settings,
+            source,
+            window_start,
+            left_end,
+            summary,
+            progress=progress,
+        )
+        right = extract_window_with_split(
+            settings,
+            source,
+            right_start,
+            window_end,
+            summary,
+            progress=progress,
+        )
         return left + right
 
     records, rows_read, duplicates = parse_airviro_csv(source, csv_text)
@@ -316,19 +403,84 @@ def build_source_records(
     start_date: date,
     end_date: date,
     summary: SourceRunSummary,
+    progress: ProgressCallback | None = None,
 ) -> list[MeasurementRow]:
     """Extract all records for one source in the given range."""
 
+    windows = date_chunks(start_date, end_date, source.max_window_days)
+    total_windows = len(windows)
+    if progress is not None:
+        progress(
+            {
+                "event": "source_start",
+                "source_type": source.source_type,
+                "source_station_id": source.station_id,
+                "from_date": start_date.isoformat(),
+                "to_date": end_date.isoformat(),
+                "max_window_days": source.max_window_days,
+                "top_level_window_count": total_windows,
+            }
+        )
+
     all_records: list[MeasurementRow] = []
-    for window_start, window_end in date_chunks(start_date, end_date, source.max_window_days):
+    for index, (window_start, window_end) in enumerate(windows, start=1):
+        if progress is not None:
+            progress(
+                {
+                    "event": "top_level_window_start",
+                    "source_type": source.source_type,
+                    "window_index": index,
+                    "window_count": total_windows,
+                    "window_start": window_start.isoformat(),
+                    "window_end": window_end.isoformat(),
+                }
+            )
+        rows_before = summary.rows_read
+        duplicates_before = summary.duplicate_measurements
+        windows_requested_before = summary.windows_requested
         records = extract_window_with_split(
             settings=settings,
             source=source,
             window_start=window_start,
             window_end=window_end,
             summary=summary,
+            progress=progress,
         )
         all_records.extend(records)
+        if progress is not None:
+            progress(
+                {
+                    "event": "top_level_window_complete",
+                    "source_type": source.source_type,
+                    "window_index": index,
+                    "window_count": total_windows,
+                    "window_start": window_start.isoformat(),
+                    "window_end": window_end.isoformat(),
+                    "rows_read_window": summary.rows_read - rows_before,
+                    "rows_read_total": summary.rows_read,
+                    "records_normalized_window": len(records),
+                    "records_normalized_total": len(all_records),
+                    "duplicates_window": summary.duplicate_measurements - duplicates_before,
+                    "duplicates_total": summary.duplicate_measurements,
+                    "windows_requested_window": summary.windows_requested - windows_requested_before,
+                    "windows_requested_total": summary.windows_requested,
+                    "split_events_total": summary.split_events,
+                }
+            )
+
+    if progress is not None:
+        progress(
+            {
+                "event": "source_complete",
+                "source_type": source.source_type,
+                "top_level_window_count": total_windows,
+                "windows_requested_total": summary.windows_requested,
+                "rows_read_total": summary.rows_read,
+                "records_normalized_total": len(all_records),
+                "duplicates_total": summary.duplicate_measurements,
+                "split_events_total": summary.split_events,
+            }
+        )
     return all_records
 
 
@@ -337,4 +489,3 @@ def summarize_indicator_counts(records: list[MeasurementRow]) -> dict[str, int]:
 
     counter = Counter(record.indicator_code for record in records)
     return dict(sorted(counter.items(), key=lambda item: item[0]))
-
