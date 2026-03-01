@@ -8,10 +8,17 @@ PROFILES_SUPERSET := --profile superset
 PROFILES_AIRFLOW := --profile airflow
 ETL_VERBOSE_FLAG := $(if $(filter 1 true yes,$(VERBOSE)),--verbose,)
 DBT_PROJECT_DIR := /opt/airflow/dbt
+DAG_ID ?= airviro_incremental
+BACKFILL_START ?= 2020-01-01
+BACKFILL_END ?=
+BACKFILL_CHUNK_DAYS ?= 31
+BACKFILL_ADVANCE_WATERMARK ?= true
 
 .PHONY: help init check-host-workspace up-superset up-airflow up-all down logs ps reset-volumes reset-all \
 	etl-bootstrap etl-dry-run etl-backfill-2020-2025 etl-backfill-2020-today \
-	devcontainer-join-course-network dbt-debug dbt-seed dbt-run dbt-test dbt-build
+	devcontainer-join-course-network dbt-debug dbt-seed dbt-run dbt-test dbt-build \
+	airflow-list-dags airflow-list-runs airflow-trigger-incremental airflow-trigger-backfill \
+	airflow-unpause-dags airflow-pause-dags
 
 help:
 	@echo "Targets:"
@@ -34,6 +41,12 @@ help:
 	@echo "  make dbt-run        Build dbt models (staging + marts)"
 	@echo "  make dbt-test       Run dbt data tests"
 	@echo "  make dbt-build      Run dbt seed + run + test"
+	@echo "  make airflow-list-dags      List DAGs in airflow-scheduler"
+	@echo "  make airflow-list-runs DAG_ID=<dag_id>  List recent DAG runs"
+	@echo "  make airflow-unpause-dags   Unpause airviro_incremental and airviro_backfill"
+	@echo "  make airflow-pause-dags     Pause airviro_incremental and airviro_backfill"
+	@echo "  make airflow-trigger-incremental        Trigger airviro_incremental DAG"
+	@echo "  make airflow-trigger-backfill BACKFILL_START=YYYY-MM-DD [BACKFILL_END=YYYY-MM-DD] [BACKFILL_CHUNK_DAYS=31] [BACKFILL_ADVANCE_WATERMARK=true]"
 	@echo "  make devcontainer-join-course-network  Attach devcontainer to compose network"
 
 init:
@@ -124,3 +137,25 @@ dbt-test: up-airflow
 
 dbt-build: up-airflow
 	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler bash -lc "cd $(DBT_PROJECT_DIR) && dbt seed --project-dir . --profiles-dir . && dbt run --project-dir . --profiles-dir . && dbt test --project-dir . --profiles-dir ."
+
+airflow-list-dags: up-airflow
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler airflow dags list
+
+airflow-list-runs: up-airflow
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler airflow dags list-runs $(DAG_ID)
+
+airflow-trigger-incremental: up-airflow
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler airflow dags trigger airviro_incremental
+
+airflow-trigger-backfill: up-airflow
+	@conf="{\"start_date\":\"$(BACKFILL_START)\",\"end_date\":\"$(BACKFILL_END)\",\"chunk_days\":$(BACKFILL_CHUNK_DAYS),\"advance_watermark\":$(BACKFILL_ADVANCE_WATERMARK)}"; \
+	echo "Trigger conf: $$conf"; \
+	$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler airflow dags trigger airviro_backfill --conf "$$conf"
+
+airflow-unpause-dags: up-airflow
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler airflow dags unpause -y airviro_incremental
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler airflow dags unpause -y airviro_backfill
+
+airflow-pause-dags: up-airflow
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler airflow dags pause -y airviro_incremental
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler airflow dags pause -y airviro_backfill

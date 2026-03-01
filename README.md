@@ -68,6 +68,7 @@ docker compose --profile superset --profile airflow up -d
 The stack is persistent by default:
 - Named volumes keep Superset metadata and shared Postgres data across restarts.
 - `airflow/dags` is bind-mounted from your repo for live DAG editing.
+- `dbt/`, `etl/`, and `sql/` are bind-mounted into Airflow containers for DAG runtime commands.
 - Airflow `logs`, `config`, and `plugins` use Docker named volumes.
 - The same Postgres instance also creates a `warehouse` database for ETL/dbt work.
 
@@ -152,6 +153,51 @@ make dbt-test
 
 dbt project files are in:
 - `dbt/`
+
+## Airflow DAG Starter (Lecture 3)
+
+Two DAGs are provided:
+- `airviro_incremental`:
+  scheduled hourly, processes one date chunk, runs dbt, then advances watermark.
+- `airviro_backfill`:
+  manual run for a custom historical range, then runs dbt.
+
+List DAGs and runs:
+
+```bash
+make airflow-list-dags
+make airflow-list-runs DAG_ID=airviro_incremental
+```
+
+Unpause course DAGs (recommended once):
+
+```bash
+make airflow-unpause-dags
+```
+
+Trigger incremental run manually:
+
+```bash
+make airflow-trigger-incremental
+```
+
+Trigger backfill run:
+
+```bash
+make airflow-trigger-backfill BACKFILL_START=2020-01-01 BACKFILL_END=2020-12-31 BACKFILL_CHUNK_DAYS=31
+```
+
+Backfill without explicit end date uses today's date:
+
+```bash
+make airflow-trigger-backfill BACKFILL_START=2020-01-01
+```
+
+### Watermark behavior
+
+- Watermark is stored in `raw.pipeline_watermark` under key `airviro_incremental`.
+- Incremental DAG reads watermark, processes next chunk, and updates watermark only after ETL + dbt success.
+- Backfill DAG can optionally advance the same watermark using `GREATEST(existing, end_date)` to avoid moving it backward.
 
 Superset snippet examples (calculated columns and metrics):
 - `superset/snippets.md`

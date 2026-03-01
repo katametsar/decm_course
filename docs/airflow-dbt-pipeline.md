@@ -1,31 +1,61 @@
 # Airflow + dbt Pipeline Notes
 
-This document tracks the SQL-first transformation setup before DAG orchestration is added.
+This document describes the current Airflow + dbt orchestration setup.
 
 ## Current State
 
 - Extraction/loading is handled by Python ETL (`etl/airviro`).
 - Transformations are handled by dbt (`dbt/`).
 - dbt is executed inside `airflow-scheduler` so course runtime is consistent.
+- Airflow DAGs orchestrate both ETL and dbt:
+  - `airviro_incremental` (scheduled)
+  - `airviro_backfill` (manual)
 
-## Run Order (Manual)
+## DAG Workflows
 
-1. Start stack:
+### Incremental (scheduled hourly)
+
+1. Ensure prerequisites:
+   `raw.pipeline_watermark` exists and ETL schema is bootstrapped.
+2. Read watermark for `airviro_incremental`.
+3. Compute next date chunk (`AIRFLOW_AIRVIRO_INCREMENTAL_MAX_DAYS`).
+4. Run ETL for that chunk.
+5. Run `dbt seed`, `dbt run`, `dbt test`.
+6. Advance watermark only on full success.
+
+### Backfill (manual)
+
+1. Accept run params: `start_date`, `end_date`, `chunk_days`, `advance_watermark`.
+2. Split range into chunks.
+3. Run ETL for each chunk in sequence.
+4. Run `dbt seed`, `dbt run`, `dbt test`.
+5. Optionally advance incremental watermark using `GREATEST(existing, end_date)`.
+
+## Commands
+
+Start stack:
 
 ```bash
 make up-all
 ```
 
-2. Load/refresh raw data:
+List DAGs/runs:
 
 ```bash
-make etl-backfill-2020-2025
+make airflow-list-dags
+make airflow-list-runs DAG_ID=airviro_incremental
 ```
 
-3. Build transformation layer:
+Trigger incremental:
 
 ```bash
-make dbt-build
+make airflow-trigger-incremental
+```
+
+Trigger backfill:
+
+```bash
+make airflow-trigger-backfill BACKFILL_START=2020-01-01 BACKFILL_END=2025-12-31 BACKFILL_CHUNK_DAYS=31
 ```
 
 ## Data Contracts
@@ -39,11 +69,8 @@ make dbt-build
   - `v_air_quality_hourly`
   - `v_pollen_daily`
 
-## Next Step
+## Operational Notes
 
-Add Airflow DAGs that orchestrate:
-1. ETL extraction/load by date window
-2. `dbt seed`
-3. `dbt run`
-4. `dbt test`
-
+- Incremental catch-up is bounded per run by `AIRFLOW_AIRVIRO_INCREMENTAL_MAX_DAYS`.
+- If the stack is down for a period, subsequent scheduled runs continue from watermark.
+- Keep `catchup=False` to avoid scheduler creating historical run backlog; watermark handles data backlog instead.

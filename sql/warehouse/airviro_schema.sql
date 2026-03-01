@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS raw.airviro_ingestion_audit (
   created_at timestamp with time zone NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS raw.pipeline_watermark (
+  pipeline_name text PRIMARY KEY,
+  watermark_date date NOT NULL,
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS mart.dim_indicator (
   source_type text NOT NULL,
   indicator_code text NOT NULL,

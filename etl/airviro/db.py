@@ -106,8 +106,17 @@ def refresh_dimensions(connection: PgConnection) -> None:
     INSERT INTO mart.dim_indicator (source_type, indicator_code, indicator_name)
     SELECT DISTINCT source_type, indicator_code, indicator_name
     FROM raw.airviro_measurement
-    ON CONFLICT (source_type, indicator_code)
-    DO UPDATE SET indicator_name = EXCLUDED.indicator_name;
+    ON CONFLICT DO NOTHING;
+
+    UPDATE mart.dim_indicator AS target
+    SET indicator_name = source.indicator_name
+    FROM (
+      SELECT DISTINCT source_type, indicator_code, indicator_name
+      FROM raw.airviro_measurement
+    ) AS source
+    WHERE target.source_type = source.source_type
+      AND target.indicator_code = source.indicator_code
+      AND target.indicator_name IS DISTINCT FROM source.indicator_name;
 
     INSERT INTO mart.dim_datetime_hour (
       observed_at,
@@ -122,20 +131,27 @@ def refresh_dimensions(connection: PgConnection) -> None:
       day_of_week_number,
       day_name
     )
-    SELECT DISTINCT
-      observed_at,
-      observed_at::date,
-      EXTRACT(YEAR FROM observed_at)::int,
-      EXTRACT(QUARTER FROM observed_at)::int,
-      EXTRACT(MONTH FROM observed_at)::int,
-      TO_CHAR(observed_at, 'Month'),
-      EXTRACT(DAY FROM observed_at)::int,
-      EXTRACT(HOUR FROM observed_at)::int,
-      EXTRACT(WEEK FROM observed_at)::int,
-      EXTRACT(ISODOW FROM observed_at)::int,
-      TO_CHAR(observed_at, 'Dy')
-    FROM raw.airviro_measurement
-    ON CONFLICT (observed_at) DO NOTHING;
+    SELECT
+      source.observed_at,
+      source.observed_at::date,
+      EXTRACT(YEAR FROM source.observed_at)::int,
+      EXTRACT(QUARTER FROM source.observed_at)::int,
+      EXTRACT(MONTH FROM source.observed_at)::int,
+      TO_CHAR(source.observed_at, 'Month'),
+      EXTRACT(DAY FROM source.observed_at)::int,
+      EXTRACT(HOUR FROM source.observed_at)::int,
+      EXTRACT(WEEK FROM source.observed_at)::int,
+      EXTRACT(ISODOW FROM source.observed_at)::int,
+      TO_CHAR(source.observed_at, 'Dy')
+    FROM (
+      SELECT DISTINCT observed_at
+      FROM raw.airviro_measurement
+    ) AS source
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM mart.dim_datetime_hour AS target
+      WHERE target.observed_at = source.observed_at
+    );
     """
 
     with connection.cursor() as cursor:
@@ -189,4 +205,3 @@ def log_ingestion_audit(
             ),
         )
     connection.commit()
-

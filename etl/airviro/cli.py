@@ -296,20 +296,28 @@ def run_pipeline(
 
     except Exception as exc:
         if not dry_run and connection is not None:
+            # Clear failed transaction state before writing failure audits.
+            connection.rollback()
             for summary in summaries:
-                log_ingestion_audit(
-                    connection,
-                    batch_id=batch_id,
-                    source_type=summary.source_type,
-                    window_start=datetime.combine(start_date, time.min),
-                    window_end=datetime.combine(end_date, time.max),
-                    rows_read=summary.rows_read,
-                    records_upserted=summary.measurements_upserted,
-                    duplicate_records=summary.duplicate_measurements,
-                    split_events=summary.split_events,
-                    status="failed",
-                    message=str(exc)[:500],
-                )
+                try:
+                    log_ingestion_audit(
+                        connection,
+                        batch_id=batch_id,
+                        source_type=summary.source_type,
+                        window_start=datetime.combine(start_date, time.min),
+                        window_end=datetime.combine(end_date, time.max),
+                        rows_read=summary.rows_read,
+                        records_upserted=summary.measurements_upserted,
+                        duplicate_records=summary.duplicate_measurements,
+                        split_events=summary.split_events,
+                        status="failed",
+                        message=str(exc)[:500],
+                    )
+                except Exception as audit_exc:
+                    log_verbose(
+                        verbose,
+                        f"[db] failed to write failure audit record: {audit_exc}",
+                    )
         raise
     finally:
         if connection is not None:

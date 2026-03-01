@@ -41,10 +41,10 @@ Out of scope:
 - [x] Finalize target architecture and dependency strategy
 - [x] Implement dbt project and model/test structure
 - [x] Add dbt execution path in compose and Makefile
-- [ ] Implement Airflow DAGs (incremental + backfill)
-- [ ] Add Airflow DAG docs and trigger helpers
-- [ ] Run end-to-end validation
-- [ ] Final review and cleanup
+- [x] Implement Airflow DAGs (incremental + backfill)
+- [x] Add Airflow DAG docs and trigger helpers
+- [x] Run end-to-end validation
+- [x] Final review and cleanup
 
 ## Surprises & Discoveries
 
@@ -65,6 +65,12 @@ Out of scope:
 
 - Discovery: Installing dbt directly into Airflow's Python environment causes dependency drift risk.
   Evidence: dbt transitive dependencies upgraded OpenTelemetry packages outside Airflow's expected range.
+
+- Discovery: dbt schema config can accidentally create `mart_mart` if both profile schema and model `+schema` are set.
+  Evidence: initial dbt run materialized objects in `mart_mart`; fixed by keeping model schema inheritance aligned with profile.
+
+- Discovery: ETL mart-dimension refresh using `ON CONFLICT(<columns>)` can fail against dbt-managed tables without matching unique constraints.
+  Evidence: Airflow task logs showed `psycopg2.errors.InvalidColumnReference` for `mart.dim_datetime_hour` conflict target; fixed by constraint-agnostic idempotent refresh SQL (`ON CONFLICT DO NOTHING` + `WHERE NOT EXISTS`/`UPDATE`).
 
 ## Decision Log
 
@@ -103,6 +109,12 @@ Current status:
 - dbt project scaffolded (`dbt/`) with seeds, staging, marts, and tests.
 - Airflow services mount `dbt/` and `etl/` folders for orchestration-ready runtime.
 - Make targets added: `dbt-debug`, `dbt-seed`, `dbt-run`, `dbt-test`, `dbt-build`.
+- Airflow DAGs added:
+  - `airviro_incremental` with watermark-controlled chunk processing.
+  - `airviro_backfill` with parameterized range/chunk execution.
+- End-to-end checks completed:
+  - `make dbt-build` passes (`seed`, `run`, `test`).
+  - Fresh manual DAG runs for both `airviro_incremental` and `airviro_backfill` completed in `success` state.
 
 Deferred items (if needed):
 - Airflow Dataset/Event-based orchestration.

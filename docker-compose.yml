@@ -45,6 +45,12 @@ x-airflow-common: &airflow-common
       read_only: true
       bind:
         create_host_path: true
+    - type: bind
+      source: ${HOST_WORKSPACE}/sql
+      target: /opt/airflow/sql
+      read_only: true
+      bind:
+        create_host_path: true
     - airflow-logs:/opt/airflow/logs
     - airflow-config:/opt/airflow/config
     - airflow-plugins:/opt/airflow/plugins
