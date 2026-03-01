@@ -1,0 +1,9 @@
+sector_id,sector_code,sector_name,min_degree,max_degree,wraps_around
+1,N,North,337.5,22.5,true
+2,NE,Northeast,22.5,67.5,false
+3,E,East,67.5,112.5,false
+4,SE,Southeast,112.5,157.5,false
+5,S,South,157.5,202.5,false
+6,SW,Southwest,202.5,247.5,false
+7,W,West,247.5,292.5,false
+8,NW,Northwest,292.5,337.5,false

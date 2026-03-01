@@ -1,0 +1,75 @@
+version: 2
+
+models:
+  - name: dim_indicator
+    description: Indicator lookup used by mart views and Superset metadata.
+    columns:
+      - name: source_type
+        tests:
+          - not_null
+      - name: indicator_code
+        tests:
+          - not_null
+      - name: indicator_name
+        tests:
+          - not_null
+
+  - name: dim_datetime_hour
+    description: Date/time attributes at hour grain.
+    columns:
+      - name: observed_at
+        tests:
+          - not_null
+          - unique
+      - name: month_number
+        tests:
+          - not_null
+      - name: day_of_week_number
+        tests:
+          - not_null
+
+  - name: dim_wind_direction
+    description: 8-sector wind direction lookup.
+    columns:
+      - name: sector_id
+        tests:
+          - not_null
+          - unique
+      - name: sector_code
+        tests:
+          - not_null
+          - unique
+
+  - name: v_airviro_measurements_long
+    description: Long-form view for exploratory analysis in Superset SQL Lab.
+    columns:
+      - name: observed_at
+        tests:
+          - not_null
+      - name: indicator_code
+        tests:
+          - not_null
+
+  - name: v_air_quality_hourly
+    description: Wide hourly air-quality mart view used for visualizations.
+    columns:
+      - name: observed_at
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_datetime_hour')
+              field: observed_at
+      - name: station_id
+        tests:
+          - not_null
+
+  - name: v_pollen_daily
+    description: Daily pollen view for lower-frequency visualizations.
+    columns:
+      - name: observed_date
+        tests:
+          - not_null
+      - name: indicator_code
+        tests:
+          - not_null
+

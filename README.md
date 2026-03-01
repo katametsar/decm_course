@@ -133,6 +133,26 @@ make etl-backfill-2020-today
 Detailed ETL notes and precipitation-source investigation:
 - `docs/etl-airviro.md`
 
+## dbt Starter (Lecture 3)
+
+dbt runs inside `airflow-scheduler` (same runtime used later by Airflow DAG tasks).
+
+```bash
+make dbt-debug
+make dbt-build
+```
+
+You can also run individual steps:
+
+```bash
+make dbt-seed
+make dbt-run
+make dbt-test
+```
+
+dbt project files are in:
+- `dbt/`
+
 Superset snippet examples (calculated columns and metrics):
 - `superset/snippets.md`
 

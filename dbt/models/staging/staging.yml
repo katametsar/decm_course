@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: stg_airviro_measurement
+    description: Canonicalized measurement rows used by marts.
+    columns:
+      - name: source_type
+        tests:
+          - not_null
+      - name: station_id
+        tests:
+          - not_null
+      - name: observed_at
+        tests:
+          - not_null
+      - name: indicator_code
+        tests:
+          - not_null
+      - name: source_row_hash
+        tests:
+          - not_null
+

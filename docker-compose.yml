@@ -34,6 +34,17 @@ x-airflow-common: &airflow-common
       target: /opt/airflow/dags
       bind:
         create_host_path: true
+    - type: bind
+      source: ${HOST_WORKSPACE}/dbt
+      target: /opt/airflow/dbt
+      bind:
+        create_host_path: true
+    - type: bind
+      source: ${HOST_WORKSPACE}/etl
+      target: /opt/airflow/etl
+      read_only: true
+      bind:
+        create_host_path: true
     - airflow-logs:/opt/airflow/logs
     - airflow-config:/opt/airflow/config
     - airflow-plugins:/opt/airflow/plugins

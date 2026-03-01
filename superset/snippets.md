@@ -5,6 +5,12 @@ This file collects copy-paste SQL snippets for common chart customizations in Su
 Dataset used in examples:
 - `mart.v_air_quality_hourly`
 
+How to use these:
+- Add expressions in **Dataset -> Edit dataset -> Columns -> + COLUMN** for calculated columns.
+- Add expressions in **Dataset -> Edit dataset -> Metrics -> + METRIC** for custom metrics.
+- Use the output alias as chart dimension/metric fields.
+- Prefer numeric sort columns (`month_number`, `day_of_week_number`) when a chart type supports custom sorting.
+
 ## Month Names In Logical Order (Space-Padded Label)
 
 Use this as a calculated column when a chart/pivot only supports alphabetic sorting on labels.
@@ -27,6 +33,30 @@ ELSE month_name
 END
 ```
 
+## Month Labels Without Space Padding (Preferred Where Supported)
+
+If the visualization supports sort-by-column, use:
+- label: `month_name`
+- sort by: `month_number` ascending
+
+If you still need a single expression for display + ordering:
+
+```sql
+CONCAT(LPAD(month_number::text, 2, '0'), ' - ', month_name)
+```
+
+## Season names (in alphabetic order - use spaces to adjust)
+
+```sql
+CASE 
+  WHEN month_name IN ('December', 'January', 'February') THEN 'Winter'
+  WHEN month_name IN ('March', 'April', 'May') THEN 'Spring'
+  WHEN month_name IN ('June', 'July', 'August') THEN 'Summer'
+  WHEN month_name IN ('September', 'October', 'November') THEN 'Autumn'
+  ELSE NULL 
+END
+```
+
 ## Weekday Names In Logical Order (Space-Padded Label)
 
 Use this as a calculated column when weekday labels would otherwise sort alphabetically.
@@ -44,6 +74,18 @@ ELSE day_name
 END
 ```
 
+## Weekday Labels Without Space Padding (Preferred Where Supported)
+
+If the visualization supports sort-by-column, use:
+- label: `day_name`
+- sort by: `day_of_week_number` ascending
+
+If you need one expression that carries sort intent into the label:
+
+```sql
+CONCAT(day_of_week_number::text, ' - ', day_name)
+```
+
 ## Wind Direction Metrics (8-Sector Radar)
 
 Use these as custom metrics for charts where each metric represents one wind direction.
@@ -59,3 +101,34 @@ AVG(CASE WHEN wind_sector = 'W'  THEN ws10 ELSE NULL END)
 AVG(CASE WHEN wind_sector = 'NW' THEN ws10 ELSE NULL END)
 ```
 
+Suggested metric names in Superset:
+- `ws10_avg_n`
+- `ws10_avg_ne`
+- `ws10_avg_e`
+- `ws10_avg_se`
+- `ws10_avg_s`
+- `ws10_avg_sw`
+- `ws10_avg_w`
+- `ws10_avg_nw`
+
+## Simple Data-Quality Filters
+
+Use these as chart-level SQL filters when needed:
+
+Keep rows where wind speed is present:
+
+```sql
+ws10 IS NOT NULL
+```
+
+Keep rows with valid wind direction degree:
+
+```sql
+wd10 BETWEEN 0 AND 360
+```
+
+Keep rows where PM2.5 and PM10 are both present:
+
+```sql
+pm2_5 IS NOT NULL AND pm10 IS NOT NULL
+```

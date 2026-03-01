@@ -7,10 +7,11 @@ COMPOSE := sudo --preserve-env=HOST_WORKSPACE docker compose --env-file $(ENV_FI
 PROFILES_SUPERSET := --profile superset
 PROFILES_AIRFLOW := --profile airflow
 ETL_VERBOSE_FLAG := $(if $(filter 1 true yes,$(VERBOSE)),--verbose,)
+DBT_PROJECT_DIR := /opt/airflow/dbt
 
 .PHONY: help init check-host-workspace up-superset up-airflow up-all down logs ps reset-volumes reset-all \
 	etl-bootstrap etl-dry-run etl-backfill-2020-2025 etl-backfill-2020-today \
-	devcontainer-join-course-network
+	devcontainer-join-course-network dbt-debug dbt-seed dbt-run dbt-test dbt-build
 
 help:
 	@echo "Targets:"
@@ -28,6 +29,11 @@ help:
 	@echo "  make etl-backfill-2020-2025  Load Airviro data for 2020-2025"
 	@echo "  make etl-backfill-2020-today Load Airviro data from 2020-01-01 to today"
 	@echo "    Optional: add VERBOSE=1 to ETL targets for progress logs"
+	@echo "  make dbt-debug      Validate dbt connection/profile in airflow-scheduler"
+	@echo "  make dbt-seed       Load dbt seeds (wind direction mapping)"
+	@echo "  make dbt-run        Build dbt models (staging + marts)"
+	@echo "  make dbt-test       Run dbt data tests"
+	@echo "  make dbt-build      Run dbt seed + run + test"
 	@echo "  make devcontainer-join-course-network  Attach devcontainer to compose network"
 
 init:
@@ -103,3 +109,18 @@ devcontainer-join-course-network: init
 		echo "$$connect_output"; \
 		exit 1; \
 	fi
+
+dbt-debug: up-airflow
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler bash -lc "cd $(DBT_PROJECT_DIR) && dbt debug --project-dir . --profiles-dir ."
+
+dbt-seed: up-airflow
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler bash -lc "cd $(DBT_PROJECT_DIR) && dbt seed --project-dir . --profiles-dir ."
+
+dbt-run: up-airflow
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler bash -lc "cd $(DBT_PROJECT_DIR) && dbt run --project-dir . --profiles-dir ."
+
+dbt-test: up-airflow
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler bash -lc "cd $(DBT_PROJECT_DIR) && dbt test --project-dir . --profiles-dir ."
+
+dbt-build: up-airflow
+	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler bash -lc "cd $(DBT_PROJECT_DIR) && dbt seed --project-dir . --profiles-dir . && dbt run --project-dir . --profiles-dir . && dbt test --project-dir . --profiles-dir ."

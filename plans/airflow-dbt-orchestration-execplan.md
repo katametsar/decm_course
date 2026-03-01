@@ -39,9 +39,10 @@ Out of scope:
 
 - [x] Investigate current state and constraints
 - [x] Finalize target architecture and dependency strategy
-- [ ] Implement dbt project and model/test structure
+- [x] Implement dbt project and model/test structure
+- [x] Add dbt execution path in compose and Makefile
 - [ ] Implement Airflow DAGs (incremental + backfill)
-- [ ] Add docs and Make targets
+- [ ] Add Airflow DAG docs and trigger helpers
 - [ ] Run end-to-end validation
 - [ ] Final review and cleanup
 
@@ -61,6 +62,9 @@ Out of scope:
 
 - Discovery: Building custom image from repository root is unnecessary for current dependency needs.
   Evidence: custom image builds successfully from `airflow/image` context with local `requirements.txt`.
+
+- Discovery: Installing dbt directly into Airflow's Python environment causes dependency drift risk.
+  Evidence: dbt transitive dependencies upgraded OpenTelemetry packages outside Airflow's expected range.
 
 ## Decision Log
 
@@ -95,6 +99,11 @@ Planned outcomes:
 - Airflow DAGs added for incremental and backfill operation.
 - Gap catch-up works after Compose stop/start.
 
+Current status:
+- dbt project scaffolded (`dbt/`) with seeds, staging, marts, and tests.
+- Airflow services mount `dbt/` and `etl/` folders for orchestration-ready runtime.
+- Make targets added: `dbt-debug`, `dbt-seed`, `dbt-run`, `dbt-test`, `dbt-build`.
+
 Deferred items (if needed):
 - Airflow Dataset/Event-based orchestration.
 - dbt docs site publishing.
@@ -114,7 +123,7 @@ Current key paths:
 Planned new paths:
 - `dbt/dbt_project.yml`
 - `dbt/models/**`
-- `dbt/seeds/dim_wind_direction.csv`
+- `dbt/seeds/dim_wind_direction_seed.csv`
 - `dbt/tests/**` (or schema tests in model YAML)
 - `airflow/dags/airviro_incremental.py`
 - `airflow/dags/airviro_backfill.py`

@@ -1,0 +1,21 @@
+name: airviro_course
+version: "1.0.0"
+config-version: 2
+
+profile: airviro_course
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages", "logs"]
+
+models:
+  airviro_course:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: view
+
+seeds:
+  airviro_course: {}
