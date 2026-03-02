@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import timedelta
 import os
 
 from airflow.sdk import Param, dag, task
@@ -98,10 +98,13 @@ def airviro_backfill() -> None:
             return
 
         end_date = utils.parse_iso_date(str(plan["end_date"]))
-        utils.set_watermark_greatest(utils.PIPELINE_NAME_INCREMENTAL, end_date)
+        closed_day = utils.utc_today() - timedelta(days=1)
+        watermark_candidate = min(end_date, closed_day)
+        utils.set_watermark_greatest(utils.PIPELINE_NAME_INCREMENTAL, watermark_candidate)
         print(
             "[airviro] watermark updated with greatest(end_date): "
-            f"{utils.PIPELINE_NAME_INCREMENTAL} -> {end_date.isoformat()}"
+            f"{utils.PIPELINE_NAME_INCREMENTAL} -> {watermark_candidate.isoformat()} "
+            f"(requested_end_date={end_date.isoformat()})"
         )
 
     prerequisites = ensure_prerequisites()

@@ -53,6 +53,12 @@ def airviro_incremental() -> None:
             start_date = watermark + timedelta(days=1)
             watermark_source = "stored_watermark"
 
+        # If watermark was advanced to today (legacy behavior), clamp to today's
+        # window so hourly runs can continue refreshing current-day data.
+        if watermark is not None and start_date > today:
+            start_date = today
+            watermark_source = f"{watermark_source}_clamped_today"
+
         if start_date > today:
             return {
                 "has_work": False,
@@ -64,6 +70,9 @@ def airviro_incremental() -> None:
             }
 
         end_date = min(today, start_date + timedelta(days=max_days_per_run - 1))
+        closed_day = today - timedelta(days=1)
+        # Watermark tracks only fully closed dates; current date is reloaded hourly.
+        watermark_target = min(end_date, closed_day)
         return {
             "has_work": True,
             "pipeline_name": pipeline_name,
@@ -71,6 +80,7 @@ def airviro_incremental() -> None:
             "watermark_date": watermark.isoformat() if watermark else None,
             "from_date": start_date.isoformat(),
             "to_date": end_date.isoformat(),
+            "watermark_target_date": watermark_target.isoformat(),
         }
 
     @task.branch(task_id="choose_path")
@@ -93,9 +103,12 @@ def airviro_incremental() -> None:
     @task(task_id="advance_watermark")
     def advance_watermark(plan: dict[str, object]) -> None:
         pipeline_name = str(plan["pipeline_name"])
-        end_date = utils.parse_iso_date(str(plan["to_date"]))
-        utils.set_watermark(pipeline_name, end_date)
-        print(f"[airviro] advanced watermark '{pipeline_name}' to {end_date.isoformat()}")
+        watermark_target_date = utils.parse_iso_date(str(plan["watermark_target_date"]))
+        utils.set_watermark(pipeline_name, watermark_target_date)
+        print(
+            f"[airviro] advanced watermark '{pipeline_name}' "
+            f"to {watermark_target_date.isoformat()}"
+        )
 
     @task(task_id="no_work")
     def no_work(plan: dict[str, object]) -> None:

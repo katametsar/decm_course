@@ -196,8 +196,10 @@ make airflow-trigger-backfill BACKFILL_START=2020-01-01
 ### Watermark behavior
 
 - Watermark is stored in `raw.pipeline_watermark` under key `airviro_incremental`.
+- Watermark tracks the last fully closed day (at most `today - 1` in UTC).
 - Incremental DAG reads watermark, processes next chunk, and updates watermark only after ETL + dbt success.
-- Backfill DAG can optionally advance the same watermark using `GREATEST(existing, end_date)` to avoid moving it backward.
+- Current day is intentionally reloaded each hourly run (idempotent upserts) so intra-day source updates are captured.
+- Backfill DAG can optionally advance the same watermark using `GREATEST(existing, candidate_date)`, where `candidate_date` is capped at `today - 1`.
 
 Superset snippet examples (calculated columns and metrics):
 - `superset/snippets.md`
