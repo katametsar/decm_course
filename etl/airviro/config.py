@@ -35,13 +35,37 @@ def _as_int(name: str, default: int) -> int:
     return int(raw)
 
 
+def _as_int_tuple(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    """Parse comma-separated integer env values into a stable tuple."""
+
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+
+    values: list[int] = []
+    seen: set[int] = set()
+    for part in raw.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        value = int(item)
+        if value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+
+    if not values:
+        return default
+    return tuple(values)
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime configuration for extraction and loading."""
 
     airviro_base_url: str
-    air_station_id: int
-    pollen_station_id: int
+    air_station_ids: tuple[int, ...]
+    pollen_station_ids: tuple[int, ...]
     request_timeout_seconds: int
     request_retries: int
     minimum_split_window_days: int
@@ -55,12 +79,20 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        air_station_ids = _as_int_tuple("AIRVIRO_AIR_STATION_IDS", ())
+        if not air_station_ids:
+            air_station_ids = (_as_int("AIRVIRO_AIR_STATION_ID", 8),)
+
+        pollen_station_ids = _as_int_tuple("AIRVIRO_POLLEN_STATION_IDS", ())
+        if not pollen_station_ids:
+            pollen_station_ids = (_as_int("AIRVIRO_POLLEN_STATION_ID", 25),)
+
         return cls(
             airviro_base_url=os.getenv(
                 "AIRVIRO_BASE_URL", "https://airviro.klab.ee/station/csv"
             ).strip(),
-            air_station_id=_as_int("AIRVIRO_AIR_STATION_ID", 8),
-            pollen_station_id=_as_int("AIRVIRO_POLLEN_STATION_ID", 25),
+            air_station_ids=air_station_ids,
+            pollen_station_ids=pollen_station_ids,
             request_timeout_seconds=_as_int("AIRVIRO_TIMEOUT_SECONDS", 45),
             request_retries=_as_int("AIRVIRO_REQUEST_RETRIES", 3),
             minimum_split_window_days=_as_int("AIRVIRO_MIN_SPLIT_DAYS", 7),
@@ -72,6 +104,18 @@ class Settings:
             warehouse_db_port=_as_int("WAREHOUSE_DB_PORT", 5432),
             warehouse_db_host=os.getenv("WAREHOUSE_DB_HOST", "postgres").strip(),
         )
+
+    @property
+    def air_station_id(self) -> int:
+        """Backward-compatible first air station id accessor."""
+
+        return self.air_station_ids[0]
+
+    @property
+    def pollen_station_id(self) -> int:
+        """Backward-compatible first pollen station id accessor."""
+
+        return self.pollen_station_ids[0]
 
     def candidate_db_hosts(self) -> list[str]:
         """Candidate hostnames to support both devcontainer and compose contexts."""

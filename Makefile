@@ -12,6 +12,7 @@ DAG_ID ?= airviro_incremental
 BACKFILL_START ?= 2020-01-01
 BACKFILL_END ?=
 BACKFILL_CHUNK_DAYS ?= 31
+BACKFILL_SOURCE_KEYS ?=
 BACKFILL_ADVANCE_WATERMARK ?= true
 
 .PHONY: help init check-host-workspace up-superset up-airflow up-all down logs ps reset-volumes reset-all \
@@ -46,7 +47,7 @@ help:
 	@echo "  make airflow-unpause-dags   Unpause airviro_incremental and airviro_backfill"
 	@echo "  make airflow-pause-dags     Pause airviro_incremental and airviro_backfill"
 	@echo "  make airflow-trigger-incremental        Trigger airviro_incremental DAG"
-	@echo "  make airflow-trigger-backfill BACKFILL_START=YYYY-MM-DD [BACKFILL_END=YYYY-MM-DD] [BACKFILL_CHUNK_DAYS=31] [BACKFILL_ADVANCE_WATERMARK=true]"
+	@echo "  make airflow-trigger-backfill BACKFILL_START=YYYY-MM-DD [BACKFILL_END=YYYY-MM-DD] [BACKFILL_CHUNK_DAYS=31] [BACKFILL_SOURCE_KEYS=air_quality_station_19] [BACKFILL_ADVANCE_WATERMARK=true]"
 	@echo "  make devcontainer-join-course-network  Attach devcontainer to compose network"
 
 init:
@@ -148,7 +149,7 @@ airflow-trigger-incremental: up-airflow
 	@$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler airflow dags trigger airviro_incremental
 
 airflow-trigger-backfill: up-airflow
-	@conf="{\"start_date\":\"$(BACKFILL_START)\",\"end_date\":\"$(BACKFILL_END)\",\"chunk_days\":$(BACKFILL_CHUNK_DAYS),\"advance_watermark\":$(BACKFILL_ADVANCE_WATERMARK)}"; \
+	@conf="{\"start_date\":\"$(BACKFILL_START)\",\"end_date\":\"$(BACKFILL_END)\",\"chunk_days\":$(BACKFILL_CHUNK_DAYS),\"source_keys\":\"$(BACKFILL_SOURCE_KEYS)\",\"advance_watermark\":$(BACKFILL_ADVANCE_WATERMARK)}"; \
 	echo "Trigger conf: $$conf"; \
 	$(COMPOSE) $(PROFILES_AIRFLOW) exec -T airflow-scheduler airflow dags trigger airviro_backfill --conf "$$conf"
 

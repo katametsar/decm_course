@@ -17,23 +17,23 @@ This document describes the current Airflow + dbt orchestration setup.
 
 1. Ensure prerequisites:
    `raw.pipeline_watermark` exists and ETL schema is bootstrapped.
-2. Read watermark for `airviro_incremental`.
-3. Compute next date chunk (`AIRFLOW_AIRVIRO_INCREMENTAL_MAX_DAYS`).
-4. Run ETL for that chunk.
+2. Read per-source watermark keys (`airviro_incremental:<source_key>`).
+3. Compute next date chunk (`AIRFLOW_AIRVIRO_INCREMENTAL_MAX_DAYS`) per source.
+4. Run ETL for each source chunk.
 5. Run `dbt seed`, `dbt run`, `dbt test`.
-6. Advance watermark only on full success, capped to `today - 1` (UTC).
+6. Advance per-source watermarks only on full success, capped to `today - 1` (UTC).
 
 Notes:
-- Watermark represents the last fully closed day, not "latest loaded timestamp".
+- Watermark represents the last fully closed day per source, not "latest loaded timestamp".
 - Current day is intentionally reloaded every hourly run so newly published intra-day source rows are ingested.
 
 ### Backfill (manual)
 
-1. Accept run params: `start_date`, `end_date`, `chunk_days`, `advance_watermark`.
+1. Accept run params: `start_date`, `end_date`, `chunk_days`, `source_keys`, `advance_watermark`.
 2. Split range into chunks.
-3. Run ETL for each chunk in sequence.
+3. Run ETL for each selected source and chunk in sequence.
 4. Run `dbt seed`, `dbt run`, `dbt test`.
-5. Optionally advance incremental watermark using `GREATEST(existing, candidate_date)`, where `candidate_date = min(end_date, today - 1)`.
+5. Optionally advance matching per-source incremental watermarks using `GREATEST(existing, candidate_date)`, where `candidate_date = min(end_date, today - 1)`.
 
 ## Commands
 
@@ -60,6 +60,12 @@ Trigger backfill:
 
 ```bash
 make airflow-trigger-backfill BACKFILL_START=2020-01-01 BACKFILL_END=2025-12-31 BACKFILL_CHUNK_DAYS=31
+```
+
+Trigger backfill for one source only:
+
+```bash
+make airflow-trigger-backfill BACKFILL_START=2020-01-01 BACKFILL_SOURCE_KEYS=air_quality_station_19
 ```
 
 ## Data Contracts

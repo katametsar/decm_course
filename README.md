@@ -158,9 +158,9 @@ dbt project files are in:
 
 Two DAGs are provided:
 - `airviro_incremental`:
-  scheduled hourly, processes one date chunk, runs dbt, then advances watermark.
+  scheduled hourly, processes one date chunk per configured source, runs dbt, then advances per-source watermarks.
 - `airviro_backfill`:
-  manual run for a custom historical range, then runs dbt.
+  manual run for a custom historical range (all or selected sources), then runs dbt.
 
 List DAGs and runs:
 
@@ -187,6 +187,12 @@ Trigger backfill run:
 make airflow-trigger-backfill BACKFILL_START=2020-01-01 BACKFILL_END=2020-12-31 BACKFILL_CHUNK_DAYS=31
 ```
 
+Backfill one source only (for example onboarding station 19 without replaying others):
+
+```bash
+make airflow-trigger-backfill BACKFILL_START=2020-01-01 BACKFILL_SOURCE_KEYS=air_quality_station_19
+```
+
 Backfill without explicit end date uses today's date:
 
 ```bash
@@ -195,11 +201,12 @@ make airflow-trigger-backfill BACKFILL_START=2020-01-01
 
 ### Watermark behavior
 
-- Watermark is stored in `raw.pipeline_watermark` under key `airviro_incremental`.
+- Watermark is stored in `raw.pipeline_watermark` with one key per source:
+  `airviro_incremental:<source_key>` (for example `airviro_incremental:air_quality_station_19`).
 - Watermark tracks the last fully closed day (at most `today - 1` in UTC).
-- Incremental DAG reads watermark, processes next chunk, and updates watermark only after ETL + dbt success.
+- Incremental DAG reads per-source watermarks, processes next chunks, and updates watermark only after ETL + dbt success.
 - Current day is intentionally reloaded each hourly run (idempotent upserts) so intra-day source updates are captured.
-- Backfill DAG can optionally advance the same watermark using `GREATEST(existing, candidate_date)`, where `candidate_date` is capped at `today - 1`.
+- Backfill DAG can optionally advance matching per-source watermarks using `GREATEST(existing, candidate_date)`, where `candidate_date` is capped at `today - 1`.
 
 Superset snippet examples (calculated columns and metrics):
 - `superset/snippets.md`
@@ -210,6 +217,9 @@ Superset snippet examples (calculated columns and metrics):
 - `.env.example` is tracked and should be copied for new environments.
 - `make init` copies `.env.example` to `.env`, generates `SUPERSET_SECRET_KEY`, and sets `AIRFLOW_UID`.
 - `.env.example` includes `SUPERSET_DB_*`, `AIRFLOW_DB_*`, and `WAREHOUSE_DB_*` to keep naming explicit by purpose.
+- Airviro sources are configured with comma-separated station lists:
+  `AIRVIRO_AIR_STATION_IDS` and `AIRVIRO_POLLEN_STATION_IDS`.
+- If your `.env` was created before this change, add those two variables manually (or recreate `.env` from `.env.example`).
 
 ## Running Outside Devcontainer
 

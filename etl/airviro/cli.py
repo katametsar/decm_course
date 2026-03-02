@@ -33,6 +33,24 @@ from .pipeline import (
 SCHEMA_SQL_PATH = Path("sql/warehouse/airviro_schema.sql")
 
 
+def parse_source_keys(raw_values: list[str] | None) -> list[str]:
+    """Parse repeatable/comma-separated source-key CLI arguments."""
+
+    if not raw_values:
+        return []
+
+    parsed: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        for part in raw.split(","):
+            source_key = part.strip()
+            if not source_key or source_key in seen:
+                continue
+            seen.add(source_key)
+            parsed.append(source_key)
+    return parsed
+
+
 def log_verbose(enabled: bool, message: str) -> None:
     """Print progress lines only when verbose mode is enabled."""
 
@@ -49,11 +67,13 @@ def build_progress_logger(verbose: bool) -> ProgressCallback | None:
     def _log(event: dict[str, object]) -> None:
         event_name = str(event.get("event", "unknown"))
         source_type = str(event.get("source_type", "unknown"))
+        source_key = str(event.get("source_key", "unknown"))
+        source_label = f"{source_key}/{source_type}"
 
         if event_name == "source_start":
             print(
                 (
-                    f"[{source_type}] extracting {event['from_date']}..{event['to_date']} "
+                    f"[{source_label}] extracting {event['from_date']}..{event['to_date']} "
                     f"(station={event['source_station_id']}, "
                     f"max_window_days={event['max_window_days']}, "
                     f"top_level_windows={event['top_level_window_count']})"
@@ -66,7 +86,7 @@ def build_progress_logger(verbose: bool) -> ProgressCallback | None:
         if event_name == "top_level_window_start":
             print(
                 (
-                    f"[{source_type}] window {event['window_index']}/{event['window_count']} "
+                    f"[{source_label}] window {event['window_index']}/{event['window_count']} "
                     f"{event['window_start']}..{event['window_end']}"
                 ),
                 file=sys.stderr,
@@ -77,7 +97,7 @@ def build_progress_logger(verbose: bool) -> ProgressCallback | None:
         if event_name == "top_level_window_complete":
             print(
                 (
-                    f"[{source_type}] window {event['window_index']}/{event['window_count']} done: "
+                    f"[{source_label}] window {event['window_index']}/{event['window_count']} done: "
                     f"rows={event['rows_read_window']} records={event['records_normalized_window']} "
                     f"duplicates={event['duplicates_window']} "
                     f"(totals rows={event['rows_read_total']} records={event['records_normalized_total']} "
@@ -91,7 +111,7 @@ def build_progress_logger(verbose: bool) -> ProgressCallback | None:
         if event_name == "window_split":
             print(
                 (
-                    f"[{source_type}] split {event['window_start']}..{event['window_end']} -> "
+                    f"[{source_label}] split {event['window_start']}..{event['window_end']} -> "
                     f"{event['left_window_start']}..{event['left_window_end']} + "
                     f"{event['right_window_start']}..{event['right_window_end']} "
                     f"(split_events_total={event['split_events_total']})"
@@ -104,7 +124,7 @@ def build_progress_logger(verbose: bool) -> ProgressCallback | None:
         if event_name == "fetch_retry":
             print(
                 (
-                    f"[{source_type}] retry {event['attempt']}/{event['retry_count']} for "
+                    f"[{source_label}] retry {event['attempt']}/{event['retry_count']} for "
                     f"{event['window_start']}..{event['window_end']} "
                     f"reason={event['reason']} backoff={event['backoff_seconds']}s"
                 ),
@@ -116,7 +136,7 @@ def build_progress_logger(verbose: bool) -> ProgressCallback | None:
         if event_name == "fetch_failed":
             print(
                 (
-                    f"[{source_type}] fetch failed after {event['attempt']}/{event['retry_count']} for "
+                    f"[{source_label}] fetch failed after {event['attempt']}/{event['retry_count']} for "
                     f"{event['window_start']}..{event['window_end']} "
                     f"reason={event['reason']} retriable={event['retriable']}"
                 ),
@@ -128,7 +148,7 @@ def build_progress_logger(verbose: bool) -> ProgressCallback | None:
         if event_name == "source_complete":
             print(
                 (
-                    f"[{source_type}] extraction complete: rows={event['rows_read_total']} "
+                    f"[{source_label}] extraction complete: rows={event['rows_read_total']} "
                     f"records={event['records_normalized_total']} duplicates={event['duplicates_total']} "
                     f"windows_requested={event['windows_requested_total']} "
                     f"splits={event['split_events_total']}"
@@ -138,7 +158,7 @@ def build_progress_logger(verbose: bool) -> ProgressCallback | None:
             )
             return
 
-        print(f"[{source_type}] progress event: {event_name}", file=sys.stderr, flush=True)
+        print(f"[{source_label}] progress event: {event_name}", file=sys.stderr, flush=True)
 
     return _log
 
@@ -176,6 +196,12 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Print detailed progress during extraction and loading",
     )
+    run_parser.add_argument(
+        "--source-key",
+        action="append",
+        default=[],
+        help="Run only selected source keys (repeat or comma-separate values)",
+    )
 
     backfill_parser = subparsers.add_parser(
         "backfill", help="Backfill from a start date to today (or provided end date)"
@@ -201,6 +227,12 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Print detailed progress during extraction and loading",
     )
+    backfill_parser.add_argument(
+        "--source-key",
+        action="append",
+        default=[],
+        help="Run only selected source keys (repeat or comma-separate values)",
+    )
 
     return parser
 
@@ -213,12 +245,22 @@ def run_pipeline(
     dry_run: bool,
     schema_sql: Path,
     verbose: bool,
+    source_keys: list[str] | None = None,
 ) -> dict[str, object]:
     if end_date < start_date:
         raise ValueError("--to must be on or after --from")
 
     batch_id = str(uuid.uuid4())
     summaries: list[SourceRunSummary] = []
+
+    sources = get_source_configs(settings)
+    if source_keys:
+        selected_keys = set(source_keys)
+        source_map = {source.source_key: source for source in sources}
+        unknown = sorted(selected_keys - set(source_map))
+        if unknown:
+            raise ValueError(f"Unknown --source-key values: {', '.join(unknown)}")
+        sources = [source for source in sources if source.source_key in selected_keys]
 
     connection = None
     selected_host = None
@@ -231,8 +273,12 @@ def run_pipeline(
     progress_logger = build_progress_logger(verbose)
 
     try:
-        for source in get_source_configs(settings):
-            summary = SourceRunSummary(source_type=source.source_type)
+        for source in sources:
+            summary = SourceRunSummary(
+                source_key=source.source_key,
+                source_type=source.source_type,
+                station_id=source.station_id,
+            )
             summaries.append(summary)
             records = build_source_records(
                 settings,
@@ -246,7 +292,7 @@ def run_pipeline(
             log_verbose(
                 verbose,
                 (
-                    f"[{source.source_type}] normalized records={len(records)} "
+                    f"[{source.source_key}] normalized records={len(records)} "
                     f"rows_read={summary.rows_read} duplicates={summary.duplicate_measurements}"
                 ),
             )
@@ -256,6 +302,8 @@ def run_pipeline(
                 print(
                     json.dumps(
                         {
+                            "source_key": source.source_key,
+                            "station_id": source.station_id,
                             "source_type": source.source_type,
                             "mode": "dry_run",
                             "rows_read": summary.rows_read,
@@ -270,14 +318,16 @@ def run_pipeline(
                 continue
 
             assert connection is not None
-            log_verbose(verbose, f"[{source.source_type}] upserting {len(records)} records")
+            log_verbose(verbose, f"[{source.source_key}] upserting {len(records)} records")
             loaded_count = upsert_measurements(connection, records)
             summary.measurements_upserted = loaded_count
-            log_verbose(verbose, f"[{source.source_type}] upserted {loaded_count} records")
+            log_verbose(verbose, f"[{source.source_key}] upserted {loaded_count} records")
             log_ingestion_audit(
                 connection,
                 batch_id=batch_id,
+                source_key=source.source_key,
                 source_type=source.source_type,
+                station_id=source.station_id,
                 window_start=datetime.combine(start_date, time.min),
                 window_end=datetime.combine(end_date, time.max),
                 rows_read=summary.rows_read,
@@ -303,7 +353,9 @@ def run_pipeline(
                     log_ingestion_audit(
                         connection,
                         batch_id=batch_id,
+                        source_key=summary.source_key,
                         source_type=summary.source_type,
+                        station_id=summary.station_id,
                         window_start=datetime.combine(start_date, time.min),
                         window_end=datetime.combine(end_date, time.max),
                         rows_read=summary.rows_read,
@@ -329,6 +381,7 @@ def run_pipeline(
         "to_date": end_date.isoformat(),
         "dry_run": dry_run,
         "database_host": selected_host,
+        "source_keys": [source.source_key for source in sources],
         "sources": [asdict(item) for item in summaries],
     }
     return summary_payload
@@ -359,6 +412,7 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
                 schema_sql=Path(args.schema_sql),
                 verbose=args.verbose,
+                source_keys=parse_source_keys(args.source_key),
             )
             print(json.dumps(result, indent=2))
             return 0

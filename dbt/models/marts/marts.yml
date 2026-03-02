@@ -62,6 +62,10 @@ models:
       - name: station_id
         tests:
           - not_null
+      - name: hum
+        description: Relative humidity (%), available for station 19.
+      - name: rain
+        description: Rainfall/downfall measurement, available for station 19.
 
   - name: v_pollen_daily
     description: Daily pollen view for lower-frequency visualizations.
@@ -72,4 +76,3 @@ models:
       - name: indicator_code
         tests:
           - not_null
-

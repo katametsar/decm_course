@@ -163,7 +163,9 @@ def log_ingestion_audit(
     connection: PgConnection,
     *,
     batch_id: str,
+    source_key: str,
     source_type: str,
+    station_id: int,
     window_start: datetime,
     window_end: datetime,
     rows_read: int,
@@ -180,7 +182,9 @@ def log_ingestion_audit(
             """
             INSERT INTO raw.airviro_ingestion_audit (
               batch_id,
+              source_key,
               source_type,
+              station_id,
               window_start,
               window_end,
               rows_read,
@@ -189,11 +193,13 @@ def log_ingestion_audit(
               split_events,
               status,
               message
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 batch_id,
+                source_key,
                 source_type,
+                station_id,
                 window_start,
                 window_end,
                 rows_read,

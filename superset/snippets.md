@@ -132,3 +132,17 @@ Keep rows where PM2.5 and PM10 are both present:
 ```sql
 pm2_5 IS NOT NULL AND pm10 IS NOT NULL
 ```
+
+## Humidity And Rainfall Filters (Station 19)
+
+Keep rows where humidity is present:
+
+```sql
+hum IS NOT NULL
+```
+
+Keep rows where rainfall/downfall is measured:
+
+```sql
+rain IS NOT NULL
+```

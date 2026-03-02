@@ -41,6 +41,7 @@ class DataQualityError(PipelineError):
 class SourceConfig:
     """Extraction configuration for one Airviro source."""
 
+    source_key: str
     source_type: str
     station_id: int
     max_window_days: int
@@ -51,7 +52,9 @@ class SourceConfig:
 class SourceRunSummary:
     """Per-source ETL metrics."""
 
+    source_key: str
     source_type: str
+    station_id: int
     windows_requested: int = 0
     rows_read: int = 0
     measurements_upserted: int = 0
@@ -99,25 +102,36 @@ def date_chunks(start_date: date, end_date: date, max_days: int) -> list[tuple[d
 def get_source_configs(settings: Settings) -> list[SourceConfig]:
     """Return source definitions used by the ETL."""
 
-    return [
-        SourceConfig(
-            source_type="air_quality",
-            station_id=settings.air_station_id,
-            max_window_days=settings.air_quality_window_days,
-            extra_params={},
-        ),
-        SourceConfig(
-            source_type="pollen",
-            station_id=settings.pollen_station_id,
-            max_window_days=settings.pollen_window_days,
-            extra_params={
-                "filter[type]": "POLLEN",
-                "filter[cancelSearch]": "",
-                "filter[submitHit]": "1",
-                "filter[indicatorIds]": "",
-            },
-        ),
-    ]
+    sources: list[SourceConfig] = []
+
+    for station_id in settings.air_station_ids:
+        sources.append(
+            SourceConfig(
+                source_key=f"air_quality_station_{station_id}",
+                source_type="air_quality",
+                station_id=station_id,
+                max_window_days=settings.air_quality_window_days,
+                extra_params={},
+            )
+        )
+
+    for station_id in settings.pollen_station_ids:
+        sources.append(
+            SourceConfig(
+                source_key=f"pollen_station_{station_id}",
+                source_type="pollen",
+                station_id=station_id,
+                max_window_days=settings.pollen_window_days,
+                extra_params={
+                    "filter[type]": "POLLEN",
+                    "filter[cancelSearch]": "",
+                    "filter[submitHit]": "1",
+                    "filter[indicatorIds]": "",
+                },
+            )
+        )
+
+    return sources
 
 
 def fetch_source_window(
@@ -151,6 +165,7 @@ def fetch_source_window(
                     progress(
                         {
                             "event": "fetch_failed",
+                            "source_key": source.source_key,
                             "source_type": source.source_type,
                             "window_start": window_start.isoformat(),
                             "window_end": window_end.isoformat(),
@@ -168,6 +183,7 @@ def fetch_source_window(
                 progress(
                     {
                         "event": "fetch_retry",
+                        "source_key": source.source_key,
                         "source_type": source.source_type,
                         "window_start": window_start.isoformat(),
                         "window_end": window_end.isoformat(),
@@ -184,6 +200,7 @@ def fetch_source_window(
                     progress(
                         {
                             "event": "fetch_failed",
+                            "source_key": source.source_key,
                             "source_type": source.source_type,
                             "window_start": window_start.isoformat(),
                             "window_end": window_end.isoformat(),
@@ -201,6 +218,7 @@ def fetch_source_window(
                 progress(
                     {
                         "event": "fetch_retry",
+                        "source_key": source.source_key,
                         "source_type": source.source_type,
                         "window_start": window_start.isoformat(),
                         "window_end": window_end.isoformat(),
@@ -363,6 +381,7 @@ def extract_window_with_split(
             progress(
                 {
                     "event": "window_split",
+                    "source_key": source.source_key,
                     "source_type": source.source_type,
                     "window_start": window_start.isoformat(),
                     "window_end": window_end.isoformat(),
@@ -413,6 +432,7 @@ def build_source_records(
         progress(
             {
                 "event": "source_start",
+                "source_key": source.source_key,
                 "source_type": source.source_type,
                 "source_station_id": source.station_id,
                 "from_date": start_date.isoformat(),
@@ -428,6 +448,7 @@ def build_source_records(
             progress(
                 {
                     "event": "top_level_window_start",
+                    "source_key": source.source_key,
                     "source_type": source.source_type,
                     "window_index": index,
                     "window_count": total_windows,
@@ -451,6 +472,7 @@ def build_source_records(
             progress(
                 {
                     "event": "top_level_window_complete",
+                    "source_key": source.source_key,
                     "source_type": source.source_type,
                     "window_index": index,
                     "window_count": total_windows,
@@ -472,6 +494,7 @@ def build_source_records(
         progress(
             {
                 "event": "source_complete",
+                "source_key": source.source_key,
                 "source_type": source.source_type,
                 "top_level_window_count": total_windows,
                 "windows_requested_total": summary.windows_requested,

@@ -3,8 +3,8 @@
 ## Overview
 
 This pipeline ingests:
-- Air quality measurements from Airviro station endpoint.
-- Pollen measurements from Airviro station endpoint.
+- Air quality measurements from configured Airviro stations (default `8,19`).
+- Pollen measurements from configured Airviro stations (default `25`).
 
 It loads normalized long-form measurements into `warehouse.raw.airviro_measurement` and exposes curated Superset-friendly views in `warehouse.mart.*`.
 
@@ -33,6 +33,12 @@ Run from repo root:
 .venv/bin/python -m etl.airviro.cli backfill --from 2020-01-01
 ```
 
+Run only selected sources (useful for onboarding a new station without replaying existing sources):
+
+```bash
+.venv/bin/python -m etl.airviro.cli run --from 2020-01-01 --to 2025-12-31 --source-key air_quality_station_19
+```
+
 Verbose progress (recommended while teaching/debugging):
 
 ```bash
@@ -46,6 +52,11 @@ Dry-run validation without DB writes:
 ```bash
 .venv/bin/python -m etl.airviro.cli run --from 2025-01-01 --to 2025-01-31 --dry-run
 ```
+
+Source configuration in `.env`:
+
+- `AIRVIRO_AIR_STATION_IDS` (comma-separated, default `8,19`)
+- `AIRVIRO_POLLEN_STATION_IDS` (comma-separated, default `25`)
 
 ## Superset serving objects
 
@@ -84,6 +95,7 @@ Tradeoff:
 - Airviro endpoint examples:
   - <https://airviro.klab.ee/station/csv?filter%5Btype%5D=POLLEN&filter%5BcancelSearch%5D=&filter%5BstationId%5D=25&filter%5BdateFrom%5D=01.05.2025&filter%5BdateUntil%5D=31.05.2025&filter%5BsubmitHit%5D=1&filter%5BindicatorIds%5D=>
   - <https://airviro.klab.ee/station/csv?filter%5BstationId%5D=8&filter%5BdateFrom%5D=21.02.2026&filter%5BdateUntil%5D=28.02.2026>
+  - <https://airviro.klab.ee/station/csv?filter%5BstationId%5D=19&filter%5BdateFrom%5D=23.02.2026&filter%5BdateUntil%5D=02.03.2026>
 - Open-Meteo APIs:
   - Docs: <https://open-meteo.com/en/docs>
   - Historical weather API: <https://open-meteo.com/en/docs/historical-weather-api>

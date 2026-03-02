@@ -26,7 +26,9 @@ CREATE INDEX IF NOT EXISTS idx_airviro_measurement_source_indicator
 CREATE TABLE IF NOT EXISTS raw.airviro_ingestion_audit (
   ingestion_audit_id bigserial PRIMARY KEY,
   batch_id text NOT NULL,
+  source_key text,
   source_type text NOT NULL,
+  station_id integer,
   window_start timestamp with time zone NOT NULL,
   window_end timestamp with time zone NOT NULL,
   rows_read integer NOT NULL,
@@ -37,6 +39,12 @@ CREATE TABLE IF NOT EXISTS raw.airviro_ingestion_audit (
   message text,
   created_at timestamp with time zone NOT NULL DEFAULT now()
 );
+
+ALTER TABLE raw.airviro_ingestion_audit
+  ADD COLUMN IF NOT EXISTS source_key text;
+
+ALTER TABLE raw.airviro_ingestion_audit
+  ADD COLUMN IF NOT EXISTS station_id integer;
 
 CREATE TABLE IF NOT EXISTS raw.pipeline_watermark (
   pipeline_name text PRIMARY KEY,
@@ -112,6 +120,8 @@ WITH air_quality AS (
     MAX(value_numeric) FILTER (WHERE indicator_code = 'pm10') AS pm10,
     MAX(value_numeric) FILTER (WHERE indicator_code = 'pm2_5') AS pm2_5,
     MAX(value_numeric) FILTER (WHERE indicator_code = 'temp') AS temp,
+    MAX(value_numeric) FILTER (WHERE indicator_code = 'hum') AS hum,
+    MAX(value_numeric) FILTER (WHERE indicator_code = 'rain') AS rain,
     MAX(value_numeric) FILTER (WHERE indicator_code = 'wd10') AS wd10,
     MAX(value_numeric) FILTER (WHERE indicator_code = 'ws10') AS ws10
   FROM raw.airviro_measurement
@@ -139,7 +149,9 @@ SELECT
   aq.wd10,
   aq.ws10,
   wd.sector_code AS wind_sector,
-  wd.sector_name AS wind_sector_name
+  wd.sector_name AS wind_sector_name,
+  aq.hum,
+  aq.rain
 FROM air_quality AS aq
 LEFT JOIN mart.dim_datetime_hour AS dt
   ON dt.observed_at = aq.observed_at

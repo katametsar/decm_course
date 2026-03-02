@@ -14,7 +14,6 @@ from typing import Iterable
 
 import psycopg2
 
-
 REPO_ROOT = Path("/opt/airflow")
 DBT_DIR = REPO_ROOT / "dbt"
 PIPELINE_NAME_INCREMENTAL = "airviro_incremental"
@@ -131,6 +130,77 @@ def set_watermark_greatest(pipeline_name: str, candidate_date: date) -> None:
         conn.commit()
 
 
+def _parse_station_ids(
+    *,
+    csv_env_name: str,
+    single_env_name: str,
+    default_station_id: int,
+) -> list[int]:
+    """Parse station-id configuration with backward-compatible env names."""
+
+    raw_csv = os.getenv(csv_env_name, "").strip()
+    if raw_csv:
+        station_ids: list[int] = []
+        seen: set[int] = set()
+        for part in raw_csv.split(","):
+            token = part.strip()
+            if not token:
+                continue
+            station_id = int(token)
+            if station_id in seen:
+                continue
+            seen.add(station_id)
+            station_ids.append(station_id)
+        if station_ids:
+            return station_ids
+
+    raw_single = os.getenv(single_env_name, "").strip()
+    if raw_single:
+        return [int(raw_single)]
+
+    return [default_station_id]
+
+
+def get_configured_sources() -> list[dict[str, object]]:
+    """Return source config metadata from env settings."""
+
+    air_station_ids = _parse_station_ids(
+        csv_env_name="AIRVIRO_AIR_STATION_IDS",
+        single_env_name="AIRVIRO_AIR_STATION_ID",
+        default_station_id=8,
+    )
+    pollen_station_ids = _parse_station_ids(
+        csv_env_name="AIRVIRO_POLLEN_STATION_IDS",
+        single_env_name="AIRVIRO_POLLEN_STATION_ID",
+        default_station_id=25,
+    )
+
+    sources: list[dict[str, object]] = []
+    for station_id in air_station_ids:
+        sources.append(
+            {
+                "source_key": f"air_quality_station_{station_id}",
+                "source_type": "air_quality",
+                "station_id": station_id,
+            }
+        )
+    for station_id in pollen_station_ids:
+        sources.append(
+            {
+                "source_key": f"pollen_station_{station_id}",
+                "source_type": "pollen",
+                "station_id": station_id,
+            }
+        )
+    return sources
+
+
+def incremental_source_watermark_key(source_key: str) -> str:
+    """Build per-source watermark key for incremental orchestration."""
+
+    return f"{PIPELINE_NAME_INCREMENTAL}:{source_key}"
+
+
 def _run_command(command: list[str], *, cwd: Path) -> None:
     """Run one shell command with explicit logging and strict failure behavior."""
 
@@ -141,7 +211,13 @@ def _run_command(command: list[str], *, cwd: Path) -> None:
         raise RuntimeError(f"Command failed ({completed.returncode}): {printable}")
 
 
-def run_etl_range(start_date: date, end_date: date, *, verbose: bool) -> None:
+def run_etl_range(
+    start_date: date,
+    end_date: date,
+    *,
+    verbose: bool,
+    source_key: str | None = None,
+) -> None:
     """Run ETL for one inclusive date range."""
 
     command = [
@@ -154,6 +230,8 @@ def run_etl_range(start_date: date, end_date: date, *, verbose: bool) -> None:
         "--to",
         end_date.isoformat(),
     ]
+    if source_key:
+        command.extend(["--source-key", source_key])
     if verbose:
         command.append("--verbose")
     _run_command(command, cwd=REPO_ROOT)
@@ -176,4 +254,3 @@ def ensure_etl_schema() -> None:
 
     command = ["python", "-m", "etl.airviro.cli", "bootstrap-db"]
     _run_command(command, cwd=REPO_ROOT)
-
