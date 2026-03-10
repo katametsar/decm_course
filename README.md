@@ -108,10 +108,6 @@ Student-facing lecture notes are in:
 - `docs/lectures/index.md`
 - Lecture 1 package: `docs/lectures/lecture-01/`
 
-Instructor-only assessments workflow:
-
-- keep these materials in your separate private instructor repository (not in this repo)
-
 ## ETL Starter (Lecture 2)
 
 Ensure the shared stack is up

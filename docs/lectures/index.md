@@ -10,8 +10,3 @@ This folder contains student-facing lecture/tutorial materials for the course.
    - (to be added)
 3. Lecture 3: Airflow + dbt orchestration and pipeline evolution
    - (to be added)
-
-## Instructor Note
-
-Homework briefs and Moodle test question banks are not stored in this repository.
-Use the separate private instructor repository for those files.
