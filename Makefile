@@ -2,24 +2,36 @@ SHELL := /bin/bash
 ENV_FILE := .env
 WORKSPACE_DIR := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 HOST_WORKSPACE ?= $(WORKSPACE_DIR)
-export HOST_WORKSPACE
 # Docker commands run inside the devcontainer against the host daemon through the
 # mounted socket, so bind mounts must use the daemon-visible workspace path.
 RESOLVE_HOST_WORKSPACE = \
-	path="$(HOST_WORKSPACE)"; \
+	requested_path="$(HOST_WORKSPACE)"; \
+	if [ -z "$$requested_path" ]; then \
+		requested_path="$(WORKSPACE_DIR)"; \
+	fi; \
+	path=""; \
+	inspected_path=""; \
+	if printf "%s" "$$requested_path" | grep -Eq "^/.*[A-Za-z]:[\\\\/]"; then \
+		echo "HOST_WORKSPACE contains an invalid mixed path: $$requested_path" >&2; \
+		exit 1; \
+	elif printf "%s" "$$requested_path" | grep -Eq "^[A-Za-z]:[\\\\/]"; then \
+		drive="$$(printf "%s" "$$requested_path" | cut -c1 | tr "[:upper:]" "[:lower:]")"; \
+		rest="$$(printf "%s" "$$requested_path" | sed -E "s@^[A-Za-z]:[\\\\/]?@@; s@\\\\@/@g")"; \
+		path="/run/desktop/mnt/host/$$drive/$$rest"; \
+	elif [ "$$requested_path" != "$(WORKSPACE_DIR)" ]; then \
+		path="$$requested_path"; \
+	fi; \
+	if [ -z "$$path" ]; then \
 	inspected_path="$$(sudo docker inspect "$$(hostname)" --format '{{range .Mounts}}{{if eq .Destination "$(WORKSPACE_DIR)"}}{{println .Source}}{{end}}{{end}}' 2>/dev/null | head -n 1)"; \
 	if [ -n "$$inspected_path" ]; then \
 		path="$$inspected_path"; \
-	elif [ -z "$$path" ]; then \
+	else \
+		path="$$requested_path"; \
+	fi; \
+	fi; \
+	if [ -z "$$path" ]; then \
 		echo "HOST_WORKSPACE is not set." >&2; \
 		exit 1; \
-	elif printf "%s" "$$path" | grep -Eq "^/.*[A-Za-z]:[\\\\/]"; then \
-		echo "HOST_WORKSPACE contains an invalid mixed path: $$path" >&2; \
-		exit 1; \
-	elif printf "%s" "$$path" | grep -Eq "^[A-Za-z]:[\\\\/]"; then \
-		drive="$$(printf "%s" "$$path" | cut -c1 | tr "[:upper:]" "[:lower:]")"; \
-		rest="$$(printf "%s" "$$path" | sed -E "s@^[A-Za-z]:[\\\\/]?@@; s@\\\\@/@g")"; \
-		path="/run/desktop/mnt/host/$$drive/$$rest"; \
 	elif ! printf "%s" "$$path" | grep -Eq '^/'; then \
 		echo "HOST_WORKSPACE must be an absolute path. Current value: $$path" >&2; \
 		exit 1; \
