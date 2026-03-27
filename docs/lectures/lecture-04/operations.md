@@ -45,6 +45,7 @@ The simple ETL teaches the basic ETL loop clearly:
 The advanced ETL demonstrates practical design patterns:
 - discover source IDs and indicator IDs from metadata endpoints;
 - bounded extraction windows;
+- guarded extraction around known unsafe source dates;
 - retries and split-on-failure behavior;
 - normalization of older staggered historical timestamps;
 - long-form raw storage;
@@ -149,7 +150,12 @@ The current API is better structured than the old CSV route, but it still has a 
    - for some historical windows, indicator rows arrive shifted by indicator order;
    - the advanced transform normalizes those rows back to clean hourly or daily timestamps before loading.
 
-3. Successful responses still need validation
+3. The `2025-10-26` station-8 air-quality day is treated as unsafe
+   - live checks showed a DST duplicate hour and staggered early-hour timestamp behavior in the same response;
+   - the advanced CLI ETL skips that one date during window selection and warns the user;
+   - a request that only covers `2025-10-26` returns no station-8 air-quality rows by design.
+
+4. Successful responses still need validation
    - the advanced ETL emits a warning when returned timestamps do not fully cover the requested window.
 
 ## Source Links

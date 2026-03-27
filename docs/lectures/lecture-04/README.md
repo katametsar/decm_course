@@ -39,17 +39,18 @@ Superset:
 
 As of 2026-03-27, the live Ohuseire API shows two different timestamp behaviors for station `8` historical air-quality data:
 
-- one-day checks through 2025-10-26 returned staggered hourly timestamps that need repair;
+- one-day checks through 2025-10-25 returned staggered hourly timestamps that need repair;
 - one-day checks from 2025-10-27 onward returned clean hourly timestamps;
-- the 2025-10-25 to 2025-10-26 weekend is irregular enough that the transition should be treated as approximate, not perfectly clean.
+- the 2025-10-26 daylight-saving transition day is irregular enough that it should be treated as unsafe, not just approximate.
 
-The current simple ETL and advanced ETL both decide whether to apply the historical timestamp repair for the whole request window at once. That works for windows fully on one side of the transition, but a wider window that spans the late-October 2025 change can still be normalized incorrectly.
+The current simple ETL still decides whether to apply the historical timestamp repair for the whole request window at once. The advanced CLI ETL now adds a small safeguard for `air_quality_station_8`: if a requested range crosses `2025-10-26`, it closes one source window on `2025-10-25`, resumes on `2025-10-27`, skips `2025-10-26`, and warns the user.
 
 Practical guidance for Lecture 4:
 
 - recent windows such as `2026-03-10..2026-03-12` are safe for demos;
 - fully older windows can still be loaded with the current repair logic;
-- avoid wide historical windows that cross the late-October 2025 transition until the source behavior is clarified.
+- the advanced CLI ETL now skips `2025-10-26` automatically for `air_quality_station_8`;
+- avoid using the simple ETL or a manual one-day advanced request for `2025-10-26` until the source behavior is clarified.
 
 The API maintainer has been notified about the timestamp issue and related source quirks. Because the fix would happen on the source side, the API behavior may change without prior warning. If historical responses start looking different, re-run a small validation window before trusting larger backfills.
 
@@ -192,6 +193,7 @@ make etl-backfill-2020-2025
 ```
 
 For historical backfills, keep the source API caution above in mind. Do not assume that one wide range crossing late October 2025 will normalize correctly.
+The advanced CLI ETL now protects the station-8 air-quality backfill by skipping `2025-10-26` and warning when that date falls inside the requested range.
 
 ### What the Advanced ETL Does Better
 

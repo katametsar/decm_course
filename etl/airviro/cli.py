@@ -146,6 +146,14 @@ def build_progress_logger(verbose: bool) -> ProgressCallback | None:
             )
             return
 
+        if event_name == "window_guard":
+            print(
+                f"[{source_label}] warning: {event['warning']}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
         if event_name == "coverage_warning":
             print(
                 f"[{source_label}] warning: {event['warning']}",
@@ -562,6 +570,7 @@ def run_pipeline(
                             "indicator_counts": indicator_counts,
                             "split_events": summary.split_events,
                             "duplicate_measurements": summary.duplicate_measurements,
+                            "warnings": summary.warnings,
                         },
                         indent=2,
                     )

@@ -1,2 +1,2 @@
 # Keep shell scripts LF so they run in Linux containers even on Windows checkouts.
-*.sh text eol=lf
+* text=auto eol=lf

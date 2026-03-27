@@ -70,7 +70,7 @@ Optional larger historical load:
 make etl-backfill-2020-2025 VERBOSE=1
 ```
 
-Note: as of 2026-03-27, the live Ohuseire historical API around late October 2025 has mixed timestamp behavior. The Lecture 4 ETLs handle fully old or fully new windows, but a wide historical window spanning that transition can still normalize incorrectly. The API maintainer has been notified, and the source behavior may change without prior warning. See `docs/lectures/lecture-04/README.md` for the current caution note.
+Note: as of 2026-03-27, the live Ohuseire historical API around late October 2025 has mixed timestamp behavior. The advanced Lecture 4 CLI ETL now skips `2025-10-26` automatically for `air_quality_station_8` and warns when a requested range crosses that day. The API maintainer has been notified, and the source behavior may change without prior warning. See `docs/lectures/lecture-04/README.md` for the current caution note.
 
 Lecture 4 warehouse relations:
 - `l4_simple.air_quality_station_8_hourly`
