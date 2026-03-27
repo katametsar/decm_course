@@ -26,6 +26,13 @@ KNOWN_INDICATOR_CODE_ALIASES = {
     "temp_10": "temp",
     "temperature_at_10_m": "temp",
 }
+# The live station-8 air-quality response for 2025-10-26 mixes DST duplicate-hour
+# behavior with staggered historical timestamps. Skip that date rather than guess.
+UNSAFE_SOURCE_DATES_BY_SOURCE_KEY = {
+    "air_quality_station_8": (
+        date(2025, 10, 26),
+    ),
+}
 ProgressCallback = Callable[[dict[str, object]], None]
 
 
@@ -141,6 +148,73 @@ def date_chunks(start_date: date, end_date: date, max_days: int) -> list[tuple[d
         windows.append((current, window_end))
         current = window_end + timedelta(days=1)
     return windows
+
+
+def split_date_range_excluding_dates(
+    start_date: date,
+    end_date: date,
+    excluded_dates: tuple[date, ...],
+) -> list[tuple[date, date]]:
+    """Split an inclusive range into contiguous spans that omit excluded dates."""
+
+    skipped_dates = sorted(
+        {
+            excluded_date
+            for excluded_date in excluded_dates
+            if start_date <= excluded_date <= end_date
+        }
+    )
+    if not skipped_dates:
+        return [(start_date, end_date)]
+
+    spans: list[tuple[date, date]] = []
+    current_start = start_date
+    for skipped_date in skipped_dates:
+        span_end = skipped_date - timedelta(days=1)
+        if current_start <= span_end:
+            spans.append((current_start, span_end))
+        current_start = skipped_date + timedelta(days=1)
+
+    if current_start <= end_date:
+        spans.append((current_start, end_date))
+
+    return spans
+
+
+def build_guarded_source_windows(
+    source: SourceConfig,
+    start_date: date,
+    end_date: date,
+) -> tuple[list[tuple[date, date]], list[str]]:
+    """Build extraction windows while skipping source dates known to be unsafe."""
+
+    unsafe_dates = tuple(
+        skipped_date
+        for skipped_date in UNSAFE_SOURCE_DATES_BY_SOURCE_KEY.get(source.source_key, ())
+        if start_date <= skipped_date <= end_date
+    )
+    if not unsafe_dates:
+        return date_chunks(start_date, end_date, source.max_window_days), []
+
+    safe_spans = split_date_range_excluding_dates(start_date, end_date, unsafe_dates)
+    windows: list[tuple[date, date]] = []
+    for span_start, span_end in safe_spans:
+        windows.extend(date_chunks(span_start, span_end, source.max_window_days))
+
+    skipped_days = ", ".join(item.isoformat() for item in unsafe_dates)
+    if windows:
+        warning = (
+            f"{source.source_key}: skipped unsafe source date(s) {skipped_days} during "
+            "window selection because the live API mixes DST duplicate-hour timestamps "
+            "with staggered historical timestamps on that day"
+        )
+    else:
+        warning = (
+            f"{source.source_key}: requested window {start_date.isoformat()}.."
+            f"{end_date.isoformat()} contains only unsafe source date(s) {skipped_days}; "
+            "no source windows were extracted"
+        )
+    return windows, [warning]
 
 
 def build_api_url(
@@ -772,8 +846,23 @@ def build_source_records(
 ) -> list[MeasurementRow]:
     """Extract all records for one source in the given range."""
 
-    windows = date_chunks(start_date, end_date, source.max_window_days)
+    windows, window_guard_warnings = build_guarded_source_windows(
+        source,
+        start_date,
+        end_date,
+    )
     total_windows = len(windows)
+    for warning in window_guard_warnings:
+        summary.warnings.append(warning)
+        if progress is not None:
+            progress(
+                {
+                    "event": "window_guard",
+                    "source_key": source.source_key,
+                    "source_type": source.source_type,
+                    "warning": warning,
+                }
+            )
     if progress is not None:
         progress(
             {

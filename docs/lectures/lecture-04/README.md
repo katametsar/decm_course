@@ -13,7 +13,7 @@ After this lecture, students should be able to:
 1. Explain `extract`, `transform`, and `load` in a concrete Python example.
 2. Run a simple ETL for Tartu air-quality data with a manual date window.
 3. Explain the difference between `replace` and `update` load modes.
-4. Discover lecture source IDs from API metadata instead of guessing them.
+4. Explain why the first ETL example hard-codes one known source before moving to API-driven discovery.
 5. Run the advanced Lecture 4 ETL for Tartu air quality and Tartu pollen.
 6. Connect Superset to the warehouse and build first charts from Lecture 4 datasets.
 7. Explain why the advanced ETL uses long-form raw storage, dimensions, and curated serving views.
@@ -34,6 +34,25 @@ Superset:
 - URL: <http://localhost:8088>
 - username: `admin`
 - password: `admin`
+
+## Source API Caution
+
+As of 2026-03-27, the live Ohuseire API shows two different timestamp behaviors for station `8` historical air-quality data:
+
+- one-day checks through 2025-10-25 returned staggered hourly timestamps that need repair;
+- one-day checks from 2025-10-27 onward returned clean hourly timestamps;
+- the 2025-10-26 daylight-saving transition day is irregular enough that it should be treated as unsafe, not just approximate.
+
+The current simple ETL still decides whether to apply the historical timestamp repair for the whole request window at once. The advanced CLI ETL now adds a small safeguard for `air_quality_station_8`: if a requested range crosses `2025-10-26`, it closes one source window on `2025-10-25`, resumes on `2025-10-27`, skips `2025-10-26`, and warns the user.
+
+Practical guidance for Lecture 4:
+
+- recent windows such as `2026-03-10..2026-03-12` are safe for demos;
+- fully older windows can still be loaded with the current repair logic;
+- the advanced CLI ETL now skips `2025-10-26` automatically for `air_quality_station_8`;
+- avoid using the simple ETL or a manual one-day advanced request for `2025-10-26` until the source behavior is clarified.
+
+The API maintainer has been notified about the timestamp issue and related source quirks. Because the fix would happen on the source side, the API behavior may change without prior warning. If historical responses start looking different, re-run a small validation window before trusting larger backfills.
 
 ## Part 1: Simple ETL Tutorial
 
@@ -79,9 +98,13 @@ The script lives in:
 
 Read it from top to bottom and connect each function to the ETL stages:
 
-1. Discover metadata
-   - reads `/api/station/en` to confirm that station `8` is Tartu air quality
-   - reads `/api/indicator/en?type=INDICATOR` to discover which indicator IDs mean `SO2`, `PM10`, `WD10`, and so on
+1. Fixed lecture constants
+   - the top of the file hard-codes the one lecture source:
+     - station `8`
+     - `type=INDICATOR`
+     - the indicator IDs that become `so2`, `pm10`, `wd10`, and the other target columns
+     - the fixed API indicator order used when older historical timestamps need repair
+   - that is deliberate: the goal of the first script is to teach ETL flow, not metadata discovery
 
 2. Extract
    - calls `/api/monitoring/en`
@@ -113,17 +136,18 @@ That simplicity is helpful for the first ETL walkthrough, but it does not scale 
 
 Even in this simple script, there are a few good habits worth noticing:
 
-1. Start with metadata endpoints
-   - do not hard-code the meaning of station IDs or indicator IDs when the API can describe them.
+1. Keep the request parameters explicit
+   - `stations`, `type`, `range`, and `indicators` are all visible in one place.
 
-2. Keep request parameters explicit
-   - store `stations`, `type`, and `range` clearly instead of building mysterious URLs by hand.
-
-3. Use bounded date windows
+2. Use bounded date windows
    - smaller windows are easier to rerun, easier to debug, and less risky if the source behaves strangely.
 
-4. Validate what came back
+3. Validate what came back
    - if the API returns old historical rows with odd timestamps, the ETL should notice and normalize them before loading.
+
+4. Add complexity only when it teaches something
+   - in the simple script we hard-code one known source;
+   - in the advanced ETL we later add metadata discovery, retries, audits, and multiple source types.
 
 ## Part 2: Advanced CLI ETL
 
@@ -167,6 +191,9 @@ Optional larger historical load for more data:
 ```bash
 make etl-backfill-2020-2025
 ```
+
+For historical backfills, keep the source API caution above in mind. Do not assume that one wide range crossing late October 2025 will normalize correctly.
+The advanced CLI ETL now protects the station-8 air-quality backfill by skipping `2025-10-26` and warning when that date falls inside the requested range.
 
 ### What the Advanced ETL Does Better
 
@@ -293,10 +320,8 @@ Suggested teaching pattern:
 ### Simple ETL
 
 `etl/lecture4_simple_air_quality.py`
-- `discover_station_metadata`: discover station `8` from the station API
-- `discover_indicator_metadata`: discover indicator IDs and names from the indicator API
 - `extract`: fetch one monitoring window from the API
-- `transform`: normalize rows and pivot them into a wide hourly table
+- `transform`: normalize rows, fix older historical timestamps when needed, and pivot into a wide hourly table
 - `load`: create/load `l4_simple.air_quality_station_8_hourly`
 - `main`: tie the ETL stages together
 

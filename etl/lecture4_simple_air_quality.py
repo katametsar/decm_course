@@ -1,59 +1,63 @@
-"""Simple Lecture 4 ETL script for Tartu air-quality data.
+"""Simple Lecture 4 ETL example for Tartu air-quality data.
 
-This module intentionally keeps the ETL flow in one file so students can read
-`extract`, `transform`, and `load` top-to-bottom before moving to the more
-advanced modular ETL package.
+This script keeps the ETL idea in one file on purpose:
+1. extract one date window from the API
+2. transform the raw rows into hourly rows
+3. load them into one PostgreSQL table
+
+It is meant to be read before the more advanced CLI ETL.
 """
-
-from __future__ import annotations
 
 from argparse import ArgumentParser
 from datetime import datetime, timedelta
-import html
-import json
 import os
 from pathlib import Path
-import re
-from typing import Iterable
-import unicodedata
-from urllib import parse, request
 
 try:
     import psycopg2
+    import requests
 except ImportError as exc:  # pragma: no cover - runtime environment concern
     raise RuntimeError(
-        "psycopg2 is required. Run inside the project virtualenv: .venv/bin/python ..."
+        "Run this script inside the project virtualenv: .venv/bin/python ..."
     ) from exc
 
 
+# --- Fixed lecture example values -------------------------------------------
+
 DEFAULT_API_BASE_URL = "https://www.ohuseire.ee/api"
 DEFAULT_API_LOCALE = "en"
+
 STATION_ID = 8
+STATION_NAME = "Tartu"
 STATION_TYPE = "INDICATOR"
+
+# These are the air-quality indicators currently exposed for Tartu station 8.
+# We hard-code them here so students can focus on ETL first.
+# The API's historical timestamp bug also follows this station-specific order.
+API_INDICATOR_IDS = (21, 23, 4, 3, 1, 6, 37, 41, 66,)
+
+INDICATOR_COLUMNS = {
+    21: "pm10",
+    23: "pm2_5",
+    4: "co",
+    3: "no2",
+    1: "so2",
+    6: "o3",
+    37: "wd10",
+    41: "ws10",
+    66: "temp",
+}
+
 TARGET_SCHEMA = "l4_simple"
 TARGET_TABLE = "air_quality_station_8_hourly"
 TARGET_RELATION = f"{TARGET_SCHEMA}.{TARGET_TABLE}"
-KNOWN_INDICATOR_CODE_ALIASES = {
-    "temp10": "temp",
-    "temp_10": "temp",
-    "temperature_at_10_m": "temp",
-}
-
-TARGET_COLUMNS = (
-    "so2",
-    "no2",
-    "co",
-    "o3",
-    "pm10",
-    "pm2_5",
-    "temp",
-    "wd10",
-    "ws10",
-)
+TARGET_COLUMNS = tuple(INDICATOR_COLUMNS.values())
 
 
-def load_env_file(path: Path) -> None:
-    """Load KEY=VALUE pairs from the local .env file if present."""
+# --- Small setup helpers ----------------------------------------------------
+
+def load_env_file(path):
+    """Load KEY=VALUE pairs from `.env` when the file exists."""
 
     if not path.exists():
         return
@@ -65,14 +69,15 @@ def load_env_file(path: Path) -> None:
 
         key, value = line.split("=", 1)
         key = key.strip()
-        if not key or key in os.environ:
-            continue
-        os.environ[key] = value.strip()
+        if key and key not in os.environ:
+            os.environ[key] = value.strip()
 
 
-def parse_args() -> ArgumentParser:
+def parse_args():
+    """Read the date window and load mode from the command line."""
+
     parser = ArgumentParser(
-        description="Simple Lecture 4 ETL for Tartu air-quality data from the Ohuseire API"
+        description="Simple Lecture 4 ETL for Tartu air-quality station 8"
     )
     parser.add_argument("--from", dest="from_date", required=True, help="YYYY-MM-DD")
     parser.add_argument("--to", dest="to_date", required=True, help="YYYY-MM-DD")
@@ -80,75 +85,61 @@ def parse_args() -> ArgumentParser:
         "--load-mode",
         required=True,
         choices=("replace", "update"),
-        help="replace = truncate/reload, update = upsert by station_id + observed_at",
+        help="replace = truncate and reload, update = upsert by station_id + observed_at",
     )
-    return parser
+    return parser.parse_args()
 
 
-def format_api_date(value: datetime) -> str:
-    """Format Python datetime to the Ohuseire date parameter style."""
+def api_base_url():
+    """Return the API base URL, allowing a local `.env` override."""
+
+    return os.getenv("AIRVIRO_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/")
+
+
+def api_locale():
+    """Return the API locale, allowing a local `.env` override."""
+
+    value = os.getenv("AIRVIRO_API_LOCALE", DEFAULT_API_LOCALE).strip()
+    return value or DEFAULT_API_LOCALE
+
+
+def format_api_date(value):
+    """Convert `YYYY-MM-DD` dates into the API's `dd.MM.yyyy` style."""
 
     return value.strftime("%d.%m.%Y")
 
 
-def source_api_base_url() -> str:
-    """Return the source API base URL, honoring local `.env` overrides."""
+# --- Extract ----------------------------------------------------------------
 
-    return os.getenv("AIRVIRO_BASE_URL", DEFAULT_API_BASE_URL).strip()
+def extract(from_date, to_date):
+    """Download one raw monitoring window from the Ohuseire API."""
 
+    start = datetime.strptime(from_date, "%Y-%m-%d")
+    end = datetime.strptime(to_date, "%Y-%m-%d")
+    url = f"{api_base_url()}/monitoring/{api_locale()}"
+    params = {
+        "stations": str(STATION_ID),
+        "type": STATION_TYPE,
+        "range": f"{format_api_date(start)},{format_api_date(end)}",
+        "indicators": ",".join(str(indicator_id) for indicator_id in API_INDICATOR_IDS),
+    }
 
-def source_api_locale() -> str:
-    """Return the source API locale, honoring local `.env` overrides."""
+    response = requests.get(url, params=params, timeout=45)
+    response.raise_for_status()
+    data = response.json()
 
-    return os.getenv("AIRVIRO_API_LOCALE", DEFAULT_API_LOCALE).strip() or DEFAULT_API_LOCALE
+    if not isinstance(data, list):
+        raise ValueError("Monitoring API returned an unexpected payload.")
 
-
-def build_api_url(endpoint: str, params: dict[str, str] | None = None) -> str:
-    """Build one Ohuseire API URL."""
-
-    url = f"{source_api_base_url().rstrip('/')}/{endpoint.lstrip('/')}"
-    if params:
-        url = f"{url}?{parse.urlencode(params)}"
-    return url
-
-
-def fetch_json(endpoint: str, params: dict[str, str] | None = None) -> object:
-    """Fetch one JSON payload from the Ohuseire API."""
-
-    url = build_api_url(endpoint, params)
-    with request.urlopen(url, timeout=45) as response:
-        return json.loads(response.read().decode("utf-8-sig"))
+    return data
 
 
-def strip_html_tags(raw_value: str | None) -> str:
-    """Convert HTML-rich API fields into readable plain text."""
+# --- Transform --------------------------------------------------------------
 
-    if not raw_value:
-        return ""
+def parse_number(raw_value):
+    """Turn API numbers like `0,5` or `3 061` into Python floats."""
 
-    without_tags = re.sub(r"<[^>]*>", "", raw_value)
-    cleaned = without_tags.replace("<", "").replace(">", "")
-    return html.unescape(cleaned).strip()
-
-
-def normalize_indicator_code(raw_name: str) -> str:
-    """Create stable warehouse-friendly indicator codes."""
-
-    normalized = unicodedata.normalize("NFKD", raw_name)
-    ascii_name = normalized.encode("ascii", "ignore").decode("ascii")
-    ascii_name = ascii_name.replace("%", "pct").replace(".", "_")
-    ascii_name = re.sub(r"[^a-zA-Z0-9]+", "_", ascii_name).strip("_").lower()
-    if not ascii_name:
-        return "unknown_indicator"
-    if ascii_name[0].isdigit():
-        return f"i_{ascii_name}"
-    return KNOWN_INDICATOR_CODE_ALIASES.get(ascii_name, ascii_name)
-
-
-def parse_localized_numeric(raw_value: str) -> float | None:
-    """Parse numeric values like `0,5`, `3 061`, or empty strings."""
-
-    value = raw_value.strip().strip('"')
+    value = "" if raw_value is None else str(raw_value).strip().strip('"')
     if value in {"", "-", "NA", "N/A", "null", "NULL"}:
         return None
 
@@ -157,178 +148,86 @@ def parse_localized_numeric(raw_value: str) -> float | None:
     return float(compact)
 
 
-def discover_station_metadata() -> dict[str, object]:
-    """Discover station 8 from the station metadata endpoint."""
+def parse_measurements(raw_rows):
+    """Read the raw API rows into a cleaner intermediate list."""
 
-    payload = fetch_json(f"station/{source_api_locale()}")
-    if not isinstance(payload, dict) or not isinstance(payload.get("features"), list):
-        raise ValueError("Station API returned an unexpected payload")
+    measurements = []
 
-    for feature in payload["features"]:
-        if not isinstance(feature, dict) or int(feature.get("id", -1)) != STATION_ID:
-            continue
-        properties = feature.get("properties") or {}
-        if not isinstance(properties, dict):
-            continue
-        return {
-            "station_id": STATION_ID,
-            "station_name": str(properties.get("name") or f"station_{STATION_ID}"),
-            "station_type": str(properties.get("type") or ""),
-            "airviro_code": str(properties.get("airviro_code") or ""),
-            "indicator_ids": tuple(int(value) for value in properties.get("indicators") or []),
-        }
+    for index, item in enumerate(raw_rows, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Monitoring row {index} is not an object.")
 
-    raise ValueError(f"Station {STATION_ID} was not found in the station API")
+        station_id = int(item.get("station"))
+        if station_id != STATION_ID:
+            raise ValueError(
+                f"API returned station {station_id} instead of station {STATION_ID}."
+            )
 
-
-def discover_indicator_metadata() -> dict[int, dict[str, str]]:
-    """Discover indicator definitions for air-quality measurements."""
-
-    payload = fetch_json(f"indicator/{source_api_locale()}", {"type": STATION_TYPE})
-    if not isinstance(payload, list):
-        raise ValueError("Indicator API returned an unexpected payload")
-
-    metadata: dict[int, dict[str, str]] = {}
-    for item in payload:
-        if not isinstance(item, dict) or "id" not in item:
+        indicator_id = int(item.get("indicator"))
+        if indicator_id not in INDICATOR_COLUMNS:
             continue
 
-        formula_text = strip_html_tags(str(item.get("formula") or ""))
-        name_text = strip_html_tags(str(item.get("name") or ""))
-        code_seed = formula_text or name_text or f"indicator_{item['id']}"
-        metadata[int(item["id"])] = {
-            "code": normalize_indicator_code(code_seed),
-            "name": name_text or formula_text or code_seed,
-        }
-    return metadata
+        measurements.append(
+            {
+                "station_id": station_id,
+                "indicator_id": indicator_id,
+                "observed_at": datetime.strptime(
+                    str(item.get("measured") or ""),
+                    "%Y-%m-%d %H:%M:%S",
+                ),
+                "value": parse_number(item.get("value")),
+            }
+        )
+
+    return measurements
 
 
-def should_normalize_staggered_rows(
-    measurements: list[dict[str, object]],
-    indicator_ids: tuple[int, ...],
-    from_date: str,
-    to_date: str,
-) -> bool:
-    """Detect older API payloads whose timestamps are shifted by indicator order."""
+def needs_historical_timestamp_fix(measurements, from_date, to_date):
+    """Detect older historical windows whose timestamps come back shifted."""
 
-    if not measurements or not indicator_ids:
+    if not measurements:
         return False
 
     start = datetime.strptime(from_date, "%Y-%m-%d")
     end = datetime.strptime(to_date, "%Y-%m-%d")
-    expected_slots = ((end - start).days + 1) * 24
-    distinct_timestamps = {row["measured_at"] for row in measurements}
-    return len(distinct_timestamps) > expected_slots
+    expected_hours = ((end - start).days + 1) * 24
+    actual_hours = {measurement["observed_at"] for measurement in measurements}
+    return len(actual_hours) > expected_hours
 
 
-def normalize_staggered_rows(
-    measurements: list[dict[str, object]],
-    indicator_ids: tuple[int, ...],
-) -> list[dict[str, object]]:
-    """Shift older staggered timestamps back to clean hourly timestamps."""
+def fix_historical_timestamps(measurements):
+    """Shift older historical rows back to clean hourly timestamps.
+
+    The API sometimes returns older data with timestamps staggered by the
+    position of the indicator in the station's API order. For the simple
+    lecture script, we keep that order in one explicit constant.
+    """
 
     indicator_offsets = {
-        indicator_id: index + 1 for index, indicator_id in enumerate(indicator_ids)
+        indicator_id: index + 1
+        for index, indicator_id in enumerate(API_INDICATOR_IDS)
     }
-    normalized: list[dict[str, object]] = []
-    for row in measurements:
-        offset_hours = indicator_offsets.get(int(row["indicator_id"]))
-        if offset_hours is None:
-            return measurements
+    fixed_measurements = []
 
-        normalized.append(
+    for measurement in measurements:
+        offset_hours = indicator_offsets[measurement["indicator_id"]]
+        fixed_measurements.append(
             {
-                **row,
-                "measured_at": row["measured_at"] - timedelta(hours=offset_hours),
-            }
-        )
-    return normalized
-
-
-def extract(from_date: str, to_date: str) -> dict[str, object]:
-    """Extract Tartu air-quality monitoring rows plus API metadata."""
-
-    start = datetime.strptime(from_date, "%Y-%m-%d")
-    end = datetime.strptime(to_date, "%Y-%m-%d")
-    station = discover_station_metadata()
-    indicators = discover_indicator_metadata()
-    params = {
-        "stations": str(STATION_ID),
-        "type": STATION_TYPE,
-        "range": ",".join([format_api_date(start), format_api_date(end)]),
-        "indicators": ",".join(str(value) for value in station["indicator_ids"]),
-    }
-    payload = fetch_json(f"monitoring/{source_api_locale()}", params)
-    if not isinstance(payload, list):
-        raise ValueError("Monitoring API returned an unexpected payload")
-
-    return {
-        "station": station,
-        "indicators": indicators,
-        "measurements": payload,
-    }
-
-
-def transform(extracted: dict[str, object], from_date: str, to_date: str) -> list[dict[str, object]]:
-    """Transform API monitoring rows into wide hourly warehouse rows."""
-
-    station = extracted["station"]
-    indicators = extracted["indicators"]
-    raw_measurements = extracted["measurements"]
-
-    if not isinstance(station, dict) or not isinstance(indicators, dict):
-        raise ValueError("Extracted payload is missing station or indicator metadata")
-    if not isinstance(raw_measurements, list):
-        raise ValueError("Extracted payload is missing monitoring rows")
-
-    parsed_measurements: list[dict[str, object]] = []
-    for index, item in enumerate(raw_measurements, start=1):
-        if not isinstance(item, dict):
-            raise ValueError(f"Monitoring row {index} is not an object")
-
-        measured_at = datetime.strptime(str(item.get("measured") or ""), "%Y-%m-%d %H:%M:%S")
-        indicator_id = int(item.get("indicator"))
-        value_raw = "" if item.get("value") is None else str(item.get("value"))
-        value_numeric = parse_localized_numeric(value_raw)
-
-        parsed_measurements.append(
-            {
-                "station_id": int(item.get("station")),
-                "measured_at": measured_at,
-                "indicator_id": indicator_id,
-                "value_numeric": value_numeric,
+                **measurement,
+                "observed_at": measurement["observed_at"] - timedelta(hours=offset_hours),
             }
         )
 
-    if should_normalize_staggered_rows(
-        parsed_measurements,
-        station["indicator_ids"],
-        from_date,
-        to_date,
-    ):
-        parsed_measurements = normalize_staggered_rows(
-            parsed_measurements,
-            station["indicator_ids"],
-        )
+    return fixed_measurements
 
-    rows_by_timestamp: dict[datetime, dict[str, object]] = {}
-    for measurement in parsed_measurements:
-        if measurement["station_id"] != STATION_ID:
-            raise ValueError(
-                f"API returned station {measurement['station_id']} instead of station {STATION_ID}"
-            )
 
-        metadata = indicators.get(int(measurement["indicator_id"]))
-        if metadata is None:
-            raise ValueError(
-                f"Indicator {measurement['indicator_id']} was not found in the indicator API"
-            )
+def pivot_hourly_rows(measurements):
+    """Turn long-form measurements into one wide row per hour."""
 
-        indicator_code = metadata["code"]
-        if indicator_code not in TARGET_COLUMNS:
-            continue
+    rows_by_timestamp = {}
 
-        observed_at = measurement["measured_at"]
+    for measurement in measurements:
+        observed_at = measurement["observed_at"]
         row = rows_by_timestamp.setdefault(
             observed_at,
             {
@@ -337,15 +236,29 @@ def transform(extracted: dict[str, object], from_date: str, to_date: str) -> lis
                 **{column: None for column in TARGET_COLUMNS},
             },
         )
-        row[indicator_code] = measurement["value_numeric"]
+        column_name = INDICATOR_COLUMNS[measurement["indicator_id"]]
+        row[column_name] = measurement["value"]
 
     rows = list(rows_by_timestamp.values())
-    rows.sort(key=lambda item: item["observed_at"])
+    rows.sort(key=lambda row: row["observed_at"])
     return rows
 
 
-def build_db_config() -> dict[str, object]:
-    """Read warehouse DB connection settings from the local .env."""
+def transform(raw_rows, from_date, to_date):
+    """Clean the API rows and shape them into hourly table rows."""
+
+    measurements = parse_measurements(raw_rows)
+
+    if needs_historical_timestamp_fix(measurements, from_date, to_date):
+        measurements = fix_historical_timestamps(measurements)
+
+    return pivot_hourly_rows(measurements)
+
+
+# --- Load -------------------------------------------------------------------
+
+def build_db_config():
+    """Read warehouse connection settings from environment variables."""
 
     return {
         "host": os.getenv("WAREHOUSE_DB_HOST", "postgres"),
@@ -356,8 +269,8 @@ def build_db_config() -> dict[str, object]:
     }
 
 
-def ensure_target_table(cursor: psycopg2.extensions.cursor) -> None:
-    """Create the lecture 4 simple ETL schema/table if needed."""
+def ensure_target_table(cursor):
+    """Create the target schema and table when they do not exist yet."""
 
     cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {TARGET_SCHEMA}")
     cursor.execute(
@@ -382,8 +295,8 @@ def ensure_target_table(cursor: psycopg2.extensions.cursor) -> None:
     )
 
 
-def load(rows: Iterable[dict[str, object]], load_mode: str) -> int:
-    """Load transformed rows into the lecture 4 simple ETL table."""
+def load(rows, load_mode):
+    """Write the transformed rows into PostgreSQL."""
 
     payload = [
         (
@@ -403,6 +316,7 @@ def load(rows: Iterable[dict[str, object]], load_mode: str) -> int:
     ]
 
     conn = psycopg2.connect(**build_db_config())
+
     try:
         with conn.cursor() as cursor:
             ensure_target_table(cursor)
@@ -440,6 +354,7 @@ def load(rows: Iterable[dict[str, object]], load_mode: str) -> int:
                 """,
                 payload,
             )
+
         conn.commit()
     finally:
         conn.close()
@@ -447,28 +362,34 @@ def load(rows: Iterable[dict[str, object]], load_mode: str) -> int:
     return len(payload)
 
 
-def main() -> int:
+# --- Main -------------------------------------------------------------------
+
+def main():
+    """Run the simple ETL from the command line."""
+
     load_env_file(Path(".env"))
-    parser = parse_args()
-    args = parser.parse_args()
+    args = parse_args()
 
     print("=== Lecture 4 Simple ETL ===")
-    print(f"Source API: {source_api_base_url()}")
-    print("Discovered source: Tartu air-quality station 8")
+    print(f"Source API: {api_base_url()}")
+    print(f"Source: {STATION_NAME} air-quality station {STATION_ID}")
     print(f"Target table: {TARGET_RELATION}")
     print(f"Window: {args.from_date}..{args.to_date}")
     print(f"Load mode: {args.load_mode}")
 
-    extracted = extract(args.from_date, args.to_date)
-    rows = transform(extracted, args.from_date, args.to_date)
-    loaded = load(rows, args.load_mode)
+    raw_rows = extract(args.from_date, args.to_date)
+    print(f"Extracted: {len(raw_rows)} raw API rows")
 
-    print(f"Extracted monitoring rows: {len(extracted['measurements'])}")
-    print(f"Transformed hourly rows: {len(rows)}")
-    print(f"Loaded rows: {loaded}")
+    rows = transform(raw_rows, args.from_date, args.to_date)
+    print(f"Transformed: {len(rows)} hourly rows")
+
+    loaded = load(rows, args.load_mode)
+    print(f"Loaded: {loaded} rows")
+
     if rows:
         print(f"First observed_at: {rows[0]['observed_at']}")
         print(f"Last observed_at: {rows[-1]['observed_at']}")
+
     print("=== Simple ETL Complete ===")
     return 0
 
